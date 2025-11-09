@@ -1,0 +1,10 @@
+# No external dependencies required
+# The pipeline uses only Python standard library:
+# - os
+# - json
+# - re
+# - pathlib
+# - typing
+# - dataclasses
+# - argparse
+
