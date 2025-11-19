@@ -66,14 +66,14 @@ python3 house_image_pipeline.py --dataset-path "path/to/Houses Dataset" --output
 
 ```bash
 python3 house_image_pipeline.py \
-    --dataset-path "temp_dataset/Houses Dataset" \
+    --dataset-path "Houses-dataset/Houses Dataset" \
     --output house_image_associations.json \
     --stats
 ```
 
 ### Command Line Arguments
 
-- `--dataset-path`: Path to the 'Houses Dataset' directory (default: `temp_dataset/Houses Dataset`)
+- `--dataset-path`: Path to the 'Houses Dataset' directory (default: `Houses-dataset/Houses Dataset`)
 - `--output`: Output JSON file path (default: `house_image_associations.json`)
 - `--stats`: Print statistics about the dataset
 

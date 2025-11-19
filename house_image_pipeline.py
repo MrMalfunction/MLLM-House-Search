@@ -286,7 +286,7 @@ def main():
     parser.add_argument(
         "--dataset-path",
         type=str,
-        default="temp_dataset/Houses Dataset",
+        default="Houses-dataset/Houses Dataset",
         help="Path to the 'Houses Dataset' directory"
     )
     parser.add_argument(
