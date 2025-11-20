@@ -7,54 +7,46 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 
 # ------------------------------------------------------------------
-# Force PyTorch to cache all artifacts inside the model directory
+# Fix torch.compile cache issue - use temp directory
 # ------------------------------------------------------------------
-MODEL_PATH = os.getenv("model_path","/projects/scdatahub/amol_dmt/model/8b")
-TORCH_CACHE = os.path.join(MODEL_PATH, ".torch_cache")
+import tempfile
+TEMP_CACHE = tempfile.mkdtemp(prefix="vllm_compile_")
+os.environ["TORCHINDUCTOR_CACHE_DIR"] = TEMP_CACHE
 
-os.environ["TORCH_HOME"] = TORCH_CACHE
-os.environ["XDG_CACHE_HOME"] = TORCH_CACHE    # covers kernels, downloads, etc
-
-# Must set this before importing torch / transformers / vllm
-# ------------------------------------------------------------------
+# Use v0 engine (more stable, still fast)
+os.environ["VLLM_USE_V1"] = "0"
 
 import torch
 from PIL import Image
 from vllm import LLM, SamplingParams
 
-SYSTEM_PROMPT = """You are an expert Real Estate Appraiser and Architectural Analyst. You have been provided with a set of images representing a single residential property. Your goal is to generate a dense, keyword rich, and comprehensive description of this property for a database. This text will be converted into vector embeddings for a semantic search engine. If a feature is not visible, omit it.
+MODEL_PATH = os.getenv("model_path", "/projects/scdatahub/amol_dmt/model/8b")
 
-You are given 4 images of the same house in this order:
-1) Frontal exterior
-2) Kitchen
-3) Bedroom
-4) Bathroom
-
-Use all images together to infer overall property quality and details.
+SYSTEM_PROMPT = """You are an expert Real Estate Appraiser and Architectural Analyst. You have been provided with a set of images representing a single residential property. Your goal is to generate a dense, keyword rich, and comprehensive description of this property for a database. This text will be converted into vector embeddings for a semantic search engine. If a feature is not visible, omit it. You are given 4 images of the same house in this order: 1) Frontal exterior 2) Kitchen 3) Bedroom 4) Bathroom Use all images together to infer overall property quality and details.
 
 1. ARCHITECTURAL and EXTERIOR ANALYSIS
-    Architecture Style:
-    Roof:
-    Siding or Facade:
-    Garage or Parking:
-    Landscaping or Hardscaping:
-    Windows:
+Architecture Style:
+Roof:
+Siding or Facade:
+Garage or Parking:
+Landscaping or Hardscaping:
+Windows:
 
 2. INTERIOR FINISHES and MATERIALS
-    Flooring:
-    Lighting:
-    Ceilings:
+Flooring:
+Lighting:
+Ceilings:
 
 3. KITCHEN DETAILS
-    Cabinetry:
-    Countertops:
-    Appliances:
-    Layout or Features:
+Cabinetry:
+Countertops:
+Appliances:
+Layout or Features:
 
 4. BATHROOM DETAILS
-    Vanity:
-    Tub or Shower:
-    Fixtures:
+Vanity:
+Tub or Shower:
+Fixtures:
 """
 
 def load_image(path):
@@ -86,7 +78,6 @@ def process_house(llm, sampling_params, house_data, base_path=""):
     # Prepare prompt
     single = "<|vision_start|><|image_pad|><|vision_end|>"
     vision_placeholders = single + single + single + single
-
     prompt = (
         f"<|im_start|>system\n{SYSTEM_PROMPT}<|im_end|>\n"
         f"<|im_start|>user\n"
@@ -94,13 +85,6 @@ def process_house(llm, sampling_params, house_data, base_path=""):
         f"Analyze the property using the provided guidelines.<|im_end|>\n"
         f"<|im_start|>assistant\n"
     )
-
-    request = {
-        "prompt": prompt,
-        "multi_modal_data": {
-            "image": [frontal_img, kitchen_img, bedroom_img, bathroom_img],
-        },
-    }
 
     request = {
         "prompt": prompt,
@@ -163,7 +147,6 @@ def get_processed_house_ids(parquet_file):
     """Get set of already processed house IDs from parquet file"""
     if not os.path.exists(parquet_file):
         return set()
-
     try:
         df = pd.read_parquet(parquet_file)
         return set(df['house_id'].tolist())
@@ -200,7 +183,6 @@ def main():
     print(f"Loading house data from {json_input_path}...")
     with open(json_input_path, 'r') as f:
         houses_data = json.load(f)
-
     print(f"Found {len(houses_data)} houses to process")
 
     # Check for already processed houses (resume capability)
@@ -223,15 +205,16 @@ def main():
     torch.backends.cudnn.benchmark = True
     torch.backends.cudnn.allow_tf32 = True
 
-    # Initialize vLLM with maximum performance for V100 PCIe 32GB
-    print("Initializing model with high-performance settings for V100 PCIe 32GB GPU...")
+    # Initialize vLLM - v0 engine is stable and fast
+    print("Initializing model with v0 engine for maximum speed on V100 PCIe 32GB...")
     llm = LLM(
         model=MODEL_PATH,
         trust_remote_code=True,
-        max_model_len=12288,  # Increased for better throughput
-        gpu_memory_utilization=0.95,  # Maximum utilization as tested
-        dtype="float16",  # FP16 for V100 Tensor Cores
-        max_num_seqs=4,  # Process 4 sequences in parallel for maximum GPU utilization
+        max_model_len=12288,
+        gpu_memory_utilization=0.95,
+        dtype="float16",
+        max_num_seqs=4,  # Process 4 houses in parallel for max throughput
+        # v0 engine doesn't have the compilation bug
     )
 
     sampling = SamplingParams(
@@ -239,17 +222,21 @@ def main():
         temperature=0.1,
         top_p=0.9,
         skip_special_tokens=True,
-        use_beam_search=False,  # Faster than beam search
+        use_beam_search=False,
     )
 
-    # Process houses in batches for maximum GPU utilization
+    # Process houses in batches
     base_path = os.path.dirname(json_input_path) if os.path.dirname(json_input_path) else ""
-
-    BATCH_SIZE = 4  # Process 4 houses at once for better GPU utilization
+    BATCH_SIZE = 4  # Match max_num_seqs for maximum GPU utilization
 
     total_to_process = len(houses_to_process)
     successful = 0
     failed = 0
+
+    print(f"\n{'='*60}")
+    print(f"STARTING BATCH PROCESSING")
+    print(f"Estimated time: ~{total_to_process * 0.5:.1f} minutes (30 sec per house)")
+    print(f"{'='*60}\n")
 
     # Process in batches
     for batch_idx in range(0, total_to_process, BATCH_SIZE):
@@ -260,6 +247,8 @@ def main():
         print(f"Processing batch {batch_idx//BATCH_SIZE + 1}/{(total_to_process + BATCH_SIZE - 1)//BATCH_SIZE}")
         print(f"Houses {batch_idx + 1}-{batch_end} of {total_to_process}")
         print(f"House IDs: {[h['house_id'] for h in batch]}")
+
+        batch_start_time = datetime.now()
 
         try:
             # Process entire batch
@@ -285,10 +274,16 @@ def main():
             failed += len(batch)
             print(f"✗ Batch processing error: {e}")
 
-        # Print running statistics
+        # Print batch statistics
+        batch_time = (datetime.now() - batch_start_time).total_seconds()
         remaining = total_to_process - batch_end
-        print(f"\nProgress: {successful} successful, {failed} failed, {remaining} remaining")
-        print(f"Throughput: {successful/(batch_end)*100:.1f}% success rate")
+        time_per_house = batch_time / len(batch)
+        eta_minutes = (remaining * time_per_house) / 60
+
+        print(f"\nBatch completed in {batch_time:.1f}s ({time_per_house:.1f}s per house)")
+        print(f"Progress: {successful} successful, {failed} failed, {remaining} remaining")
+        print(f"ETA: {eta_minutes:.1f} minutes")
+        print(f"Throughput: {successful/batch_end*100:.1f}% success rate")
 
     # Final summary
     print(f"\n{'='*60}")
@@ -305,6 +300,14 @@ def main():
         df_final = pd.read_parquet(output_file)
         print(f"Total records in output file: {len(df_final)}")
         print(f"File size: {os.path.getsize(output_file) / (1024*1024):.2f} MB")
+
+    # Cleanup temp cache
+    import shutil
+    try:
+        shutil.rmtree(TEMP_CACHE)
+        print(f"\nCleaned up temporary cache: {TEMP_CACHE}")
+    except:
+        pass
 
 if __name__ == "__main__":
     main()
