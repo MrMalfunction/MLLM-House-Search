@@ -7,14 +7,10 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 
 # ------------------------------------------------------------------
-# Fix torch.compile cache issue - use temp directory
+# Disable torch.compile completely - this is the issue
 # ------------------------------------------------------------------
-import tempfile
-TEMP_CACHE = tempfile.mkdtemp(prefix="vllm_compile_")
-os.environ["TORCHINDUCTOR_CACHE_DIR"] = TEMP_CACHE
-
-# Use v0 engine (more stable, still fast)
-os.environ["VLLM_USE_V1"] = "0"
+os.environ["VLLM_TORCH_COMPILE_LEVEL"] = "0"
+os.environ["VLLM_ATTENTION_BACKEND"] = "FLASHINFER"  # Use flashinfer instead
 
 import torch
 from PIL import Image
@@ -205,16 +201,17 @@ def main():
     torch.backends.cudnn.benchmark = True
     torch.backends.cudnn.allow_tf32 = True
 
-    # Initialize vLLM - v0 engine is stable and fast
-    print("Initializing model with v0 engine for maximum speed on V100 PCIe 32GB...")
+    # Initialize vLLM - disable compilation entirely
+    print("Initializing model for V100 PCIe 32GB (compilation disabled for stability)...")
     llm = LLM(
         model=MODEL_PATH,
         trust_remote_code=True,
-        max_model_len=12288,
-        gpu_memory_utilization=0.95,
+        max_model_len=10240,  # Slightly reduced
+        gpu_memory_utilization=0.92,  # Slightly conservative
         dtype="float16",
-        max_num_seqs=4,  # Process 4 houses in parallel for max throughput
-        # v0 engine doesn't have the compilation bug
+        max_num_seqs=4,
+        enforce_eager=True,  # CRITICAL: No compilation
+        disable_custom_all_reduce=False,
     )
 
     sampling = SamplingParams(
@@ -227,7 +224,7 @@ def main():
 
     # Process houses in batches
     base_path = os.path.dirname(json_input_path) if os.path.dirname(json_input_path) else ""
-    BATCH_SIZE = 4  # Match max_num_seqs for maximum GPU utilization
+    BATCH_SIZE = 4  # Process 4 houses at once
 
     total_to_process = len(houses_to_process)
     successful = 0
@@ -235,7 +232,7 @@ def main():
 
     print(f"\n{'='*60}")
     print(f"STARTING BATCH PROCESSING")
-    print(f"Estimated time: ~{total_to_process * 0.5:.1f} minutes (30 sec per house)")
+    print(f"Estimated time: ~{total_to_process * 0.75:.1f} minutes")
     print(f"{'='*60}\n")
 
     # Process in batches
@@ -277,7 +274,7 @@ def main():
         # Print batch statistics
         batch_time = (datetime.now() - batch_start_time).total_seconds()
         remaining = total_to_process - batch_end
-        time_per_house = batch_time / len(batch)
+        time_per_house = batch_time / len(batch) if len(batch) > 0 else 0
         eta_minutes = (remaining * time_per_house) / 60
 
         print(f"\nBatch completed in {batch_time:.1f}s ({time_per_house:.1f}s per house)")
@@ -300,14 +297,6 @@ def main():
         df_final = pd.read_parquet(output_file)
         print(f"Total records in output file: {len(df_final)}")
         print(f"File size: {os.path.getsize(output_file) / (1024*1024):.2f} MB")
-
-    # Cleanup temp cache
-    import shutil
-    try:
-        shutil.rmtree(TEMP_CACHE)
-        print(f"\nCleaned up temporary cache: {TEMP_CACHE}")
-    except:
-        pass
 
 if __name__ == "__main__":
     main()
