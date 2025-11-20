@@ -232,10 +232,6 @@ def main():
         gpu_memory_utilization=0.95,  # Maximum utilization as tested
         dtype="float16",  # FP16 for V100 Tensor Cores
         max_num_seqs=4,  # Process 4 sequences in parallel for maximum GPU utilization
-        enforce_eager=False,  # Use CUDA graphs for faster inference
-        disable_log_stats=True,  # Reduce overhead
-        tensor_parallel_size=1,  # Single GPU
-        max_num_batched_tokens=8192,  # Optimize batch processing
     )
 
     sampling = SamplingParams(

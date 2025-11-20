@@ -63,8 +63,8 @@ echo "Setting environment variables for main.py..."
 export model_path="${model_path:-/projects/scdatahub/amol_dmt/model/8b}"
 
 # json_input_path: Input JSON file with house image associations
-# Default looks for it in the cloned repository's image_to_text_pipeline directory
-export json_input_path="${json_input_path:-$JOB_DIR/MLLM-House-Search/image_to_text_pipeline/house_image_associations.json}"
+# Default looks for it in the cloned repository's root directory
+export json_input_path="${json_input_path:-$JOB_DIR/MLLM-House-Search/house_image_associations.json}"
 
 # output_path: Directory where output parquet files will be saved
 # Default: save to the job directory for easy access
@@ -77,6 +77,26 @@ echo "Environment variables set:"
 echo "  model_path: $model_path"
 echo "  json_input_path: $json_input_path"
 echo "  output_path: $output_path"
+
+# Optional: Clean torch compile cache if CLEAR_CACHE=1 is set
+# To clear cache: export CLEAR_CACHE=1 before running sbatch
+if [ "$CLEAR_CACHE" = "1" ]; then
+    echo "CLEAR_CACHE=1 detected. Cleaning torch compile cache..."
+    TORCH_CACHE_DIR="$model_path/.torch_cache"
+    if [ -d "$TORCH_CACHE_DIR/vllm" ]; then
+        echo "Removing $TORCH_CACHE_DIR/vllm"
+        rm -rf "$TORCH_CACHE_DIR/vllm"
+        echo "Cache cleared successfully"
+    else
+        echo "No cache directory found at $TORCH_CACHE_DIR/vllm"
+    fi
+else
+    echo "Using existing cache (set CLEAR_CACHE=1 to clear cache)"
+fi
+
+# Disable torch.compile to avoid cache corruption issues on V100
+export VLLM_TORCH_COMPILE_LEVEL=0
+echo "Disabled torch.compile (VLLM_TORCH_COMPILE_LEVEL=0)"
 
 echo "================================"
 echo "Activating conda environment..."
