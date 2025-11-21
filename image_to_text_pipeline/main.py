@@ -390,4 +390,8 @@ def main():
     # Show final parquet file info
     if os.path.exists(output_file):
         df_final = pd.read_parquet(output_file)
-        print(
+        print(f"Final parquet file contains {len(df_final)} records")
+        print(f"Columns: {list(df_final.columns)}")
+
+if __name__ == "__main__":
+    main()
