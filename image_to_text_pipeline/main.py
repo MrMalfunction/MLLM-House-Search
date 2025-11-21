@@ -1,21 +1,18 @@
 import sys
 import os
 import json
+import argparse
 from datetime import datetime
+from pathlib import Path
 import pandas as pd
-import pyarrow as pa
-import pyarrow.parquet as pq
 import torch
-import torch.cuda
 import gc
 import time
 from PIL import Image
 from transformers import AutoProcessor, AutoModelForVision2Seq
 from qwen_vl_utils import process_vision_info
-from huggingface_hub import snapshot_download
 
 MODEL_ID = "Qwen/Qwen3-VL-8B-Instruct"
-MODEL_PATH = os.getenv("model_path", "/projects/scdatahub/amol_dmt/model/8b")
 
 SYSTEM_PROMPT = """You are an expert Real Estate Appraiser and Architectural Analyst. You have been provided with a set of images representing a single residential property. Your goal is to generate a dense, keyword rich, and comprehensive description of this property for a database. This text will be converted into vector embeddings for a semantic search engine. If a feature is not visible, omit it. You are given 4 images of the same house in this order: 1) Frontal exterior 2) Kitchen 3) Bedroom 4) Bathroom Use all images together to infer overall property quality and details.
 
@@ -44,354 +41,319 @@ Tub or Shower:
 Fixtures:
 """
 
-# Global model and processor
-model = None
-processor = None
+class HouseDescriptionGenerator:
+    def __init__(self, model_path=None, use_cache=True):
+        self.model = None
+        self.processor = None
+        self.model_path = model_path or "./models/qwen3-vl-8b"
+        self.use_cache = use_cache
 
-def initialize_model():
-    """Initialize the model and processor once"""
-    global model, processor
+    def initialize_model(self):
+        """Initialize the model and processor"""
+        print(f"[{datetime.now().strftime('%H:%M:%S')}] Initializing model...")
 
-    print(f"[{datetime.now()}] Starting model initialization...")
+        # Clear GPU memory
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+            gc.collect()
+            device_name = torch.cuda.get_device_name(0)
+            print(f"GPU detected: {device_name}")
+        else:
+            print("No GPU detected, using CPU")
 
-    # Clear any existing GPU memory
-    if torch.cuda.is_available():
-        print(f"[{datetime.now()}] Clearing GPU cache...")
-        torch.cuda.empty_cache()
-        gc.collect()
+        # Determine dtype
+        if torch.cuda.is_available():
+            device_name = torch.cuda.get_device_name(0)
+            use_bf16 = any(gpu in device_name for gpu in ["A100", "H100", "L4", "4090"])
+            dtype = torch.bfloat16 if use_bf16 else torch.float16
+            print(f"Using dtype: {dtype}")
+        else:
+            dtype = torch.float32
 
-    # Detect GPU and choose optimal dtype
-    print(f"[{datetime.now()}] Detecting GPU...")
-    device_name = torch.cuda.get_device_name(0) if torch.cuda.is_available() else "CPU"
-    use_bf16 = any(gpu in device_name for gpu in ["A100", "H100", "L4", "4090"])
-    dtype = torch.bfloat16 if use_bf16 else torch.float16
+        # Load processor and model
+        print(f"Loading from: {self.model_path}")
 
-    print(f"Device detected: {device_name}")
-    print(f"Using dtype: {dtype} (bfloat16 optimized for A100/H100/L4, float16 for V100/T4)")
-    print(f"CUDA available: {torch.cuda.is_available()}")
-    print(f"CUDA device count: {torch.cuda.device_count()}")
+        if not os.path.exists(self.model_path):
+            print(f"Model not found locally. Downloading {MODEL_ID}...")
+            from huggingface_hub import snapshot_download
+            snapshot_download(repo_id=MODEL_ID, local_dir=self.model_path)
 
-    # Download model if needed
-    print(f"[{datetime.now()}] Checking model path...")
-    if not os.path.exists(MODEL_PATH) or not os.listdir(MODEL_PATH):
-        print(f"Downloading {MODEL_ID} to {MODEL_PATH}...")
-        snapshot_download(repo_id=MODEL_ID, local_dir=MODEL_PATH)
-        print("Download finished.")
-    else:
-        print(f"Model found at {MODEL_PATH}. Skipping download.")
-
-    # Load processor first
-    print(f"[{datetime.now()}] Loading processor from {MODEL_PATH}...")
-    processor = AutoProcessor.from_pretrained(MODEL_PATH, trust_remote_code=True)
-    print(f"[{datetime.now()}] Processor loaded successfully.")
-
-    # Load model
-    print(f"[{datetime.now()}] Loading model from {MODEL_PATH}...")
-    print(f"[{datetime.now()}] This may take several minutes...")
-
-    model = AutoModelForVision2Seq.from_pretrained(
-        MODEL_PATH,
-        torch_dtype=dtype,
-        device_map="auto",
-        trust_remote_code=True,
-        low_cpu_mem_usage=True,
-        attn_implementation="eager"
-    )
-    print(f"[{datetime.now()}] Model weights loaded, moving to device...")
-
-    # Set model to eval mode and disable gradients
-    print(f"[{datetime.now()}] Setting model to eval mode...")
-    model.eval()
-
-    print(f"[{datetime.now()}] Disabling gradients...")
-    for param in model.parameters():
-        param.requires_grad = False
-
-    print(f"[{datetime.now()}] Model loaded and configured successfully.")
-    print(f"Model device: {next(model.parameters()).device}")
-    print(f"Model dtype: {next(model.parameters()).dtype}")
-
-    # GPU memory info
-    if torch.cuda.is_available():
-        print(f"[{datetime.now()}] GPU Memory allocated: {torch.cuda.memory_allocated(0) / 1024**3:.2f} GB")
-        print(f"[{datetime.now()}] GPU Memory reserved: {torch.cuda.memory_reserved(0) / 1024**3:.2f} GB")
-
-    # Optional: Warmup with a dummy forward pass
-    print(f"[{datetime.now()}] Performing warmup pass...")
-    try:
-        with torch.inference_mode():
-            # Create a small dummy tensor on the right device
-            dummy_input = torch.randn(1, 3, 224, 224, device=model.device, dtype=dtype)
-            print(f"[{datetime.now()}] Warmup complete.")
-    except Exception as e:
-        print(f"[{datetime.now()}] Warmup skipped (this is okay): {e}")
-
-    return model, processor
-
-def load_image(path):
-    """Load and convert image to RGB"""
-    if not os.path.exists(path):
-        raise FileNotFoundError(path)
-    img = Image.open(path)
-    if img.mode != "RGB":
-        img = img.convert("RGB")
-    return img
-
-def process_multiple_images(image_paths, system_prompt, user_query, max_tokens=512):
-    """
-    Process multiple images with system prompt and user query using transformers
-    """
-    global model, processor
-
-    if model is None or processor is None:
-        return "Error: Model or processor not loaded."
-
-    # Load images
-    print(f"[{datetime.now()}] Loading {len(image_paths)} images...")
-    images = [load_image(path) for path in image_paths]
-
-    # Construct messages with multiple images
-    messages = []
-    if system_prompt:
-        messages.append({"role": "system", "content": [{"type": "text", "text": system_prompt}]})
-
-    # Build content with multiple images
-    content = []
-    for img in images:
-        content.append({"type": "image", "image": img})
-    content.append({"type": "text", "text": user_query})
-
-    messages.append({
-        "role": "user",
-        "content": content,
-    })
-
-    # Prepare inputs
-    text = processor.apply_chat_template(
-        messages, tokenize=False, add_generation_prompt=True
-    )
-    image_inputs, video_inputs = process_vision_info(messages)
-    inputs = processor(
-        text=[text],
-        images=image_inputs,
-        videos=video_inputs,
-        padding=True,
-        return_tensors="pt",
-    )
-    inputs = inputs.to(model.device)
-
-    # Generate response
-    start_time = time.time()
-
-    with torch.inference_mode():
-        generated_ids = model.generate(
-            **inputs,
-            max_new_tokens=max_tokens,
-            do_sample=False,
-            num_beams=1,
-            use_cache=True,
-            pad_token_id=processor.tokenizer.pad_token_id
+        self.processor = AutoProcessor.from_pretrained(
+            self.model_path,
+            trust_remote_code=True
         )
 
-    generation_time = time.time() - start_time
+        self.model = AutoModelForVision2Seq.from_pretrained(
+            self.model_path,
+            torch_dtype=dtype,
+            device_map="auto",
+            trust_remote_code=True,
+            low_cpu_mem_usage=True,
+            attn_implementation="eager"
+        )
 
-    generated_ids_trimmed = [
-        out_ids[len(in_ids):] for in_ids, out_ids in zip(inputs.input_ids, generated_ids)
-    ]
-    output_text = processor.batch_decode(
-        generated_ids_trimmed, skip_special_tokens=True, clean_up_tokenization_spaces=False
-    )
+        self.model.eval()
+        for param in self.model.parameters():
+            param.requires_grad = False
 
-    return output_text[0], generation_time
+        print(f"Model loaded successfully on {next(self.model.parameters()).device}")
 
-def process_house(house_data, base_path=""):
-    """Process a single house and return the result"""
-    house_id = house_data["house_id"]
-    images_paths = house_data["images"]
+        if torch.cuda.is_available():
+            print(f"GPU Memory: {torch.cuda.memory_allocated(0) / 1024**3:.2f} GB")
 
-    # Build full image paths
-    try:
-        image_files = [
-            os.path.join(base_path, images_paths["frontal"]),
-            os.path.join(base_path, images_paths["kitchen"]),
-            os.path.join(base_path, images_paths["bedroom"]),
-            os.path.join(base_path, images_paths["bathroom"])
+    def load_image(self, path):
+        """Load and convert image to RGB"""
+        if not os.path.exists(path):
+            raise FileNotFoundError(f"Image not found: {path}")
+        img = Image.open(path)
+        if img.mode != "RGB":
+            img = img.convert("RGB")
+        return img
+
+    def generate_description(self, image_paths, max_tokens=512):
+        """Generate description from multiple images"""
+        if self.model is None or self.processor is None:
+            raise RuntimeError("Model not initialized. Call initialize_model() first.")
+
+        # Load images
+        images = [self.load_image(path) for path in image_paths]
+
+        # Construct messages
+        messages = [
+            {"role": "system", "content": [{"type": "text", "text": SYSTEM_PROMPT}]}
         ]
 
-        # Verify all images exist
-        for img_path in image_files:
-            if not os.path.exists(img_path):
-                raise FileNotFoundError(f"Image not found: {img_path}")
+        # Add images and query
+        content = []
+        for img in images:
+            content.append({"type": "image", "image": img})
+        content.append({"type": "text", "text": "Analyze the property using the provided guidelines."})
 
-    except FileNotFoundError as e:
-        print(f"Error loading images for house {house_id}: {e}")
-        return None
-    except Exception as e:
-        print(f"Unexpected error loading images for house {house_id}: {e}")
-        return None
+        messages.append({"role": "user", "content": content})
 
-    # Process with model
-    user_query = "Analyze the property using the provided guidelines."
-
-    try:
-        description, gen_time = process_multiple_images(
-            image_files,
-            SYSTEM_PROMPT,
-            user_query,
+        # Prepare inputs
+        text = self.processor.apply_chat_template(
+            messages, tokenize=False, add_generation_prompt=True
         )
+        image_inputs, video_inputs = process_vision_info(messages)
+        inputs = self.processor(
+            text=[text],
+            images=image_inputs,
+            videos=video_inputs,
+            padding=True,
+            return_tensors="pt",
+        ).to(self.model.device)
 
-        result = {
-            "house_id": house_data["house_id"],
-            "bedrooms": house_data["metadata"].get("bedrooms"),
-            "bathrooms": house_data["metadata"].get("bathrooms"),
-            "area": house_data["metadata"].get("area"),
-            "zipcode": house_data["metadata"].get("zipcode"),
-            "price": house_data["metadata"].get("price"),
-            "frontal_image": house_data["images"]["frontal"],
-            "kitchen_image": house_data["images"]["kitchen"],
-            "bedroom_image": house_data["images"]["bedroom"],
-            "bathroom_image": house_data["images"]["bathroom"],
-            "description": description,
-            "generation_time_seconds": gen_time,
-            "processed_at": datetime.now().isoformat()
-        }
+        # Generate
+        start_time = time.time()
+        with torch.inference_mode():
+            generated_ids = self.model.generate(
+                **inputs,
+                max_new_tokens=max_tokens,
+                do_sample=False,
+                num_beams=1,
+                use_cache=self.use_cache,
+                pad_token_id=self.processor.tokenizer.pad_token_id
+            )
+        generation_time = time.time() - start_time
 
-        return result
+        # Decode
+        generated_ids_trimmed = [
+            out_ids[len(in_ids):]
+            for in_ids, out_ids in zip(inputs.input_ids, generated_ids)
+        ]
+        output_text = self.processor.batch_decode(
+            generated_ids_trimmed,
+            skip_special_tokens=True,
+            clean_up_tokenization_spaces=False
+        )[0]
 
-    except Exception as e:
-        print(f"Error processing house {house_id}: {e}")
-        return None
+        return output_text, generation_time
 
-def get_processed_house_ids(parquet_file):
-    """Get set of already processed house IDs from parquet file"""
-    if not os.path.exists(parquet_file):
-        return set()
-    try:
-        df = pd.read_parquet(parquet_file)
-        return set(df['house_id'].tolist())
-    except Exception as e:
-        print(f"Warning: Could not read existing parquet file: {e}")
-        return set()
+    def process_house(self, house_data, base_path=""):
+        """Process a single house"""
+        house_id = house_data["house_id"]
 
-def append_to_parquet(result, parquet_file):
-    """Append a single result to parquet file"""
-    df_new = pd.DataFrame([result])
+        try:
+            # Build image paths
+            image_paths = [
+                os.path.join(base_path, house_data["images"]["frontal"]),
+                os.path.join(base_path, house_data["images"]["kitchen"]),
+                os.path.join(base_path, house_data["images"]["bedroom"]),
+                os.path.join(base_path, house_data["images"]["bathroom"])
+            ]
 
-    if os.path.exists(parquet_file):
-        # Append to existing file
-        df_existing = pd.read_parquet(parquet_file)
-        df_combined = pd.concat([df_existing, df_new], ignore_index=True)
-        df_combined.to_parquet(parquet_file, index=False, engine='pyarrow')
-    else:
-        # Create new file
-        df_new.to_parquet(parquet_file, index=False, engine='pyarrow')
+            # Generate description
+            description, gen_time = self.generate_description(image_paths)
+
+            # Build result
+            result = {
+                "house_id": house_id,
+                "bedrooms": house_data["metadata"].get("bedrooms"),
+                "bathrooms": house_data["metadata"].get("bathrooms"),
+                "area": house_data["metadata"].get("area"),
+                "zipcode": house_data["metadata"].get("zipcode"),
+                "price": house_data["metadata"].get("price"),
+                "frontal_image": house_data["images"]["frontal"],
+                "kitchen_image": house_data["images"]["kitchen"],
+                "bedroom_image": house_data["images"]["bedroom"],
+                "bathroom_image": house_data["images"]["bathroom"],
+                "description": description,
+                "generation_time_seconds": gen_time,
+                "processed_at": datetime.now().isoformat()
+            }
+
+            return result
+
+        except Exception as e:
+            print(f"Error processing house {house_id}: {e}")
+            return None
+
 
 def main():
-    # Get paths from environment variables or use defaults
-    json_input_path = os.getenv("json_input_path", "house_image_associations.json")
-    output_dir = os.getenv("output_path", "/projects/scdatahub/amol_dmt")
+    parser = argparse.ArgumentParser(
+        description="Generate descriptions for house images using Qwen3-VL",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter
+    )
+    parser.add_argument(
+        "--input", "-i",
+        default="house_image_associations.json",
+        help="Path to input JSON file with house data"
+    )
+    parser.add_argument(
+        "--output", "-o",
+        default="house_descriptions.parquet",
+        help="Path to output parquet file"
+    )
+    parser.add_argument(
+        "--model-path", "-m",
+        default="./models/qwen3-vl-8b",
+        help="Path to store/load the model"
+    )
+    parser.add_argument(
+        "--resume", "-r",
+        action="store_true",
+        help="Resume processing (skip already processed houses)"
+    )
 
-    # Create output filename with datetime
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    output_file = os.path.join(output_dir, f"house_descriptions_{timestamp}.parquet")
+    args = parser.parse_args()
 
-    # Ensure output directory exists
-    os.makedirs(output_dir, exist_ok=True)
+    # Validate input file
+    if not os.path.exists(args.input):
+        print(f"Error: Input file not found: {args.input}")
+        sys.exit(1)
 
-    # Load house image associations
-    print(f"Loading house data from {json_input_path}...")
-    with open(json_input_path, 'r') as f:
+    # Create output directory if needed
+    output_dir = os.path.dirname(args.output)
+    if output_dir and not os.path.exists(output_dir):
+        os.makedirs(output_dir, exist_ok=True)
+
+    # Load house data
+    print(f"Loading house data from {args.input}...")
+    with open(args.input, 'r') as f:
         houses_data = json.load(f)
-    print(f"Found {len(houses_data)} houses to process")
+    print(f"Found {len(houses_data)} houses")
 
-    # Check for already processed houses (resume capability)
-    processed_ids = get_processed_house_ids(output_file)
-    if processed_ids:
-        print(f"Found {len(processed_ids)} already processed houses, resuming...")
-        houses_to_process = [h for h in houses_data if h['house_id'] not in processed_ids]
-    else:
-        houses_to_process = houses_data
+    # Check for resume
+    processed_ids = set()
+    if args.resume and os.path.exists(args.output):
+        try:
+            df = pd.read_parquet(args.output)
+            processed_ids = set(df['house_id'].tolist())
+            print(f"Resuming: {len(processed_ids)} houses already processed")
+        except Exception as e:
+            print(f"Warning: Could not read existing file: {e}")
 
-    print(f"Will process {len(houses_to_process)} houses")
+    houses_to_process = [
+        h for h in houses_data
+        if h['house_id'] not in processed_ids
+    ]
 
-    if len(houses_to_process) == 0:
+    if not houses_to_process:
         print("All houses already processed!")
         return
 
-    # Initialize model once
-    print(f"\n[{datetime.now()}] ===== INITIALIZING MODEL =====")
-    initialize_model()
-    print(f"[{datetime.now()}] ===== MODEL INITIALIZATION COMPLETE =====\n")
+    print(f"Will process {len(houses_to_process)} houses")
 
-    # Process houses one by one
-    base_path = os.path.dirname(json_input_path) if os.path.dirname(json_input_path) else ""
+    # Initialize generator
+    generator = HouseDescriptionGenerator(model_path=args.model_path)
+    generator.initialize_model()
 
-    total_to_process = len(houses_to_process)
+    # Process houses
+    base_path = os.path.dirname(args.input) if os.path.dirname(args.input) else "."
+    results = []
     successful = 0
     failed = 0
-    total_generation_time = 0
+    start_time = datetime.now()
 
     print(f"\n{'='*60}")
-    print(f"STARTING PROCESSING")
+    print("STARTING PROCESSING")
     print(f"{'='*60}\n")
-
-    start_time = datetime.now()
 
     for idx, house_data in enumerate(houses_to_process):
         house_id = house_data['house_id']
-        print(f"\n{'='*60}")
-        print(f"Processing house {idx + 1}/{total_to_process}")
-        print(f"House ID: {house_id}")
-
-        house_start_time = datetime.now()
+        print(f"[{idx+1}/{len(houses_to_process)}] Processing house {house_id}...")
 
         try:
-            result = process_house(house_data, base_path)
+            result = generator.process_house(house_data, base_path)
 
             if result:
-                append_to_parquet(result, output_file)
+                results.append(result)
                 successful += 1
-                total_generation_time += result.get('generation_time_seconds', 0)
-                print(f"✓ House {house_id}: {result['description'][:100]}...")
-                print(f"  Generation time: {result.get('generation_time_seconds', 0):.2f}s")
+                print(f"  ✓ Success ({result['generation_time_seconds']:.2f}s)")
+                print(f"  Description: {result['description'][:100]}...")
+
+                # Save incrementally every 10 houses
+                if len(results) >= 10:
+                    df_new = pd.DataFrame(results)
+                    if os.path.exists(args.output):
+                        df_existing = pd.read_parquet(args.output)
+                        df_combined = pd.concat([df_existing, df_new], ignore_index=True)
+                        df_combined.to_parquet(args.output, index=False)
+                    else:
+                        df_new.to_parquet(args.output, index=False)
+                    results = []
+                    print(f"  Saved progress to {args.output}")
             else:
                 failed += 1
-                print(f"✗ House {house_id}: Processing failed")
+                print(f"  ✗ Failed")
 
         except Exception as e:
             failed += 1
-            print(f"✗ House {house_id}: Error - {e}")
+            print(f"  ✗ Error: {e}")
 
-        # Print progress statistics
-        house_time = (datetime.now() - house_start_time).total_seconds()
-        remaining = total_to_process - (idx + 1)
-        avg_time_per_house = (datetime.now() - start_time).total_seconds() / (idx + 1)
-        eta_minutes = (remaining * avg_time_per_house) / 60
+        # Progress stats
+        elapsed = (datetime.now() - start_time).total_seconds()
+        avg_time = elapsed / (idx + 1)
+        remaining = len(houses_to_process) - (idx + 1)
+        eta_minutes = (remaining * avg_time) / 60
 
-        print(f"\nHouse processed in {house_time:.1f}s")
-        print(f"Progress: {successful} successful, {failed} failed, {remaining} remaining")
-        print(f"Average time per house: {avg_time_per_house:.1f}s")
-        print(f"ETA: {eta_minutes:.1f} minutes")
-        print(f"Success rate: {successful/(idx+1)*100:.1f}%")
+        print(f"  Progress: {successful} ok, {failed} failed, {remaining} left (ETA: {eta_minutes:.1f}m)\n")
+
+    # Save remaining results
+    if results:
+        df_new = pd.DataFrame(results)
+        if os.path.exists(args.output):
+            df_existing = pd.read_parquet(args.output)
+            df_combined = pd.concat([df_existing, df_new], ignore_index=True)
+            df_combined.to_parquet(args.output, index=False)
+        else:
+            df_new.to_parquet(args.output, index=False)
 
     # Final summary
     total_time = (datetime.now() - start_time).total_seconds()
     print(f"\n{'='*60}")
-    print(f"PROCESSING COMPLETE")
+    print("PROCESSING COMPLETE")
     print(f"{'='*60}")
-    print(f"Total houses in dataset: {len(houses_data)}")
-    print(f"Already processed (skipped): {len(processed_ids)}")
-    print(f"Newly processed: {successful}")
+    print(f"Total processed: {successful}")
     print(f"Failed: {failed}")
-    print(f"Total processing time: {total_time/60:.1f} minutes")
-    print(f"Average generation time: {total_generation_time/successful:.2f}s per house" if successful > 0 else "N/A")
-    print(f"Output file: {output_file}")
+    print(f"Total time: {total_time/60:.1f} minutes")
+    print(f"Output: {args.output}")
 
-    # Show final parquet file info
-    if os.path.exists(output_file):
-        df_final = pd.read_parquet(output_file)
-        print(f"Final parquet file contains {len(df_final)} records")
-        print(f"Columns: {list(df_final.columns)}")
+    if os.path.exists(args.output):
+        df_final = pd.read_parquet(args.output)
+        print(f"Final file contains: {len(df_final)} records")
+
 
 if __name__ == "__main__":
     main()
