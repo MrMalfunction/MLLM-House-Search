@@ -40,18 +40,17 @@ echo "Working directory: $(pwd)"
 # Load necessary modules (adjust based on your cluster)
 module load git
 
-# Clone the repository with recursive submodules
+# Use existing code from /projects/scdatahub
 echo "================================"
-echo "Cloning repository..."
-git clone --recursive https://github.com/MrMalfunction/MLLM-House-Search.git
+echo "Using code from /projects/scdatahub/amol_dmt/image_to_text_runs/MLLM-House-Search"
+CODE_PATH="/projects/scdatahub/amol_dmt/image_to_text_runs/MLLM-House-Search"
 
-# Check if clone was successful
-if [ $? -eq 0 ]; then
-    echo "Repository cloned successfully"
-    echo "Repository location: $JOB_DIR/MLLM-House-Search"
-    ls -la MLLM-House-Search/
+# Check if code exists
+if [ -d "$CODE_PATH" ]; then
+    echo "Code directory found: $CODE_PATH"
+    ls -la "$CODE_PATH"
 else
-    echo "Error: Failed to clone repository"
+    echo "Error: Code directory not found at $CODE_PATH"
     exit 1
 fi
 
@@ -59,7 +58,7 @@ echo "================================"
 echo "Copying model to local storage to avoid network latency..."
 
 # Source model location (network storage)
-SOURCE_MODEL_PATH="${model_path:-/projects/scdatahub/amol_dmt/model/8b}"
+SOURCE_MODEL_PATH="/projects/scdatahub/amol_dmt/model/8b"
 
 # Local model path (on scratch - much faster)
 LOCAL_MODEL_PATH="$JOB_DIR/model_cache"
@@ -103,15 +102,16 @@ echo "Setting environment variables for main.py..."
 export model_path="$LOCAL_MODEL_PATH"
 
 # json_input_path: Input JSON file with house image associations
-# Default looks for it in the cloned repository's root directory
-export json_input_path="${json_input_path:-$JOB_DIR/MLLM-House-Search/house_image_associations.json}"
+# Use the correct JSON file name
+export json_input_path="${json_input_path:-/projects/scdatahub/amol_dmt/image_to_text_runs/MLLM-House-Search/house_images_associateions.json}"
 
-# output_path: Directory where output parquet files will be saved
-# Default: save to the job directory for easy access
-export output_path="${output_path:-$JOB_DIR/output}"
+# output_path: Output parquet file path
+# Save to the output directory in /projects/scdatahub
+export output_path="${output_path:-/projects/scdatahub/amol_dmt/image_to_text_runs/output/house_descriptions.parquet}"
 
 # Create output directory
-mkdir -p "$output_path"
+OUTPUT_DIR="/projects/scdatahub/amol_dmt/image_to_text_runs/output"
+mkdir -p "$OUTPUT_DIR"
 
 echo "Environment variables set:"
 echo "  model_path: $model_path (LOCAL SCRATCH STORAGE)"
@@ -141,10 +141,14 @@ echo "================================"
 echo "Running main.py..."
 
 # Navigate to the image_to_text_pipeline directory
-cd MLLM-House-Search/image_to_text_pipeline
+cd "$CODE_PATH/image_to_text_pipeline"
 
-# Run the main script
-python main.py
+# Run the main script with proper arguments
+python main.py \
+    --input "$json_input_path" \
+    --output "$output_path" \
+    --model-path "$model_path" \
+    --resume
 
 # Check if script ran successfully
 if [ $? -eq 0 ]; then

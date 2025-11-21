@@ -235,6 +235,12 @@ def main():
         action="store_true",
         help="Resume processing (skip already processed houses)"
     )
+    parser.add_argument(
+        "--save-every", "-s",
+        type=int,
+        default=5,
+        help="Save progress after processing this many houses"
+    )
 
     args = parser.parse_args()
 
@@ -303,17 +309,16 @@ def main():
                 print(f"  ✓ Success ({result['generation_time_seconds']:.2f}s)")
                 print(f"  Description: {result['description'][:100]}...")
 
-                # Save incrementally every 10 houses
-                if len(results) >= 10:
-                    df_new = pd.DataFrame(results)
-                    if os.path.exists(args.output):
-                        df_existing = pd.read_parquet(args.output)
-                        df_combined = pd.concat([df_existing, df_new], ignore_index=True)
-                        df_combined.to_parquet(args.output, index=False)
-                    else:
-                        df_new.to_parquet(args.output, index=False)
-                    results = []
-                    print(f"  Saved progress to {args.output}")
+                # Save after every single house
+                df_new = pd.DataFrame(results)
+                if os.path.exists(args.output):
+                    df_existing = pd.read_parquet(args.output)
+                    df_combined = pd.concat([df_existing, df_new], ignore_index=True)
+                    df_combined.to_parquet(args.output, index=False)
+                else:
+                    df_new.to_parquet(args.output, index=False)
+                results = []
+                print(f"  💾 Saved to {args.output}")
             else:
                 failed += 1
                 print(f"  ✗ Failed")
@@ -330,7 +335,7 @@ def main():
 
         print(f"  Progress: {successful} ok, {failed} failed, {remaining} left (ETA: {eta_minutes:.1f}m)\n")
 
-    # Save remaining results
+    # Save any remaining results (should be empty now since we save after each house)
     if results:
         df_new = pd.DataFrame(results)
         if os.path.exists(args.output):
@@ -339,6 +344,7 @@ def main():
             df_combined.to_parquet(args.output, index=False)
         else:
             df_new.to_parquet(args.output, index=False)
+        print(f"  💾 Saved final batch to {args.output}")
 
     # Final summary
     total_time = (datetime.now() - start_time).total_seconds()
