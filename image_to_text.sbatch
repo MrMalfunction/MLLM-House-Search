@@ -1,7 +1,7 @@
 #!/bin/bash
 #SBATCH --job-name=mllm_house_search
 #SBATCH --partition=gpu
-#SBATCH --gres=gpu:v100-pcie:1
+#SBATCH --gres=gpu:a100-pcie:1
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=4

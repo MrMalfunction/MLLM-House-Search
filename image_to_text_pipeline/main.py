@@ -18,32 +18,7 @@ sys.stderr = os.fdopen(sys.stderr.fileno(), 'w', buffering=1)
 
 MODEL_ID = "Qwen/Qwen3-VL-8B-Instruct"
 
-SYSTEM_PROMPT = """You are an expert Real Estate Appraiser and Architectural Analyst. You have been provided with a set of images representing a single residential property. Your goal is to generate a dense, keyword rich, and comprehensive description of this property for a database. This text will be converted into vector embeddings for a semantic search engine. If a feature is not visible, omit it. You are given 4 images of the same house in this order: 1) Frontal exterior 2) Kitchen 3) Bedroom 4) Bathroom Use all images together to infer overall property quality and details.
-
-1. ARCHITECTURAL and EXTERIOR ANALYSIS
-Architecture Style:
-Roof:
-Siding or Facade:
-Garage or Parking:
-Landscaping or Hardscaping:
-Windows:
-
-2. INTERIOR FINISHES and MATERIALS
-Flooring:
-Lighting:
-Ceilings:
-
-3. KITCHEN DETAILS
-Cabinetry:
-Countertops:
-Appliances:
-Layout or Features:
-
-4. BATHROOM DETAILS
-Vanity:
-Tub or Shower:
-Fixtures:
-"""
+SYSTEM_PROMPT = """Analyze this residential property using 4 images (frontal, kitchen, bedroom, bathroom). Generate a dense, keyword-rich description for semantic search. Include: architectural style, exterior features, interior finishes, flooring, kitchen (cabinets, countertops, appliances), bathroom (vanity, tub/shower, fixtures), lighting, and overall quality. Omit features not visible."""
 
 class HouseDescriptionGenerator:
     def __init__(self, model_path=None, use_cache=True):
@@ -114,13 +89,15 @@ class HouseDescriptionGenerator:
             img = img.convert("RGB")
         return img
 
-    def generate_description(self, image_paths, max_tokens=512):
+    def generate_description(self, image_paths, max_tokens=200):
         """Generate description from multiple images"""
         if self.model is None or self.processor is None:
             raise RuntimeError("Model not initialized. Call initialize_model() first.")
 
+        print(f"    Loading {len(image_paths)} images...", flush=True)
         # Load images
         images = [self.load_image(path) for path in image_paths]
+        print(f"    Images loaded successfully", flush=True)
 
         # Construct messages
         messages = [
@@ -149,17 +126,21 @@ class HouseDescriptionGenerator:
         ).to(self.model.device)
 
         # Generate
+        print(f"    Starting generation (max {max_tokens} tokens)...", flush=True)
         start_time = time.time()
         with torch.inference_mode():
             generated_ids = self.model.generate(
                 **inputs,
                 max_new_tokens=max_tokens,
+                min_new_tokens=50,
                 do_sample=False,
                 num_beams=1,
                 use_cache=self.use_cache,
-                pad_token_id=self.processor.tokenizer.pad_token_id
+                pad_token_id=self.processor.tokenizer.pad_token_id,
+                eos_token_id=self.processor.tokenizer.eos_token_id,
             )
         generation_time = time.time() - start_time
+        print(f"    Generation completed in {generation_time:.2f}s", flush=True)
 
         # Decode
         generated_ids_trimmed = [
@@ -186,6 +167,11 @@ class HouseDescriptionGenerator:
                 os.path.join(base_path, house_data["images"]["bedroom"]),
                 os.path.join(base_path, house_data["images"]["bathroom"])
             ]
+
+            # Validate all images exist
+            for img_path in image_paths:
+                if not os.path.exists(img_path):
+                    raise FileNotFoundError(f"Image not found: {img_path}")
 
             # Generate description
             description, gen_time = self.generate_description(image_paths)
