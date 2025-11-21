@@ -1,12 +1,11 @@
 #!/bin/bash
 #SBATCH --job-name=mllm_house_search
 #SBATCH --partition=gpu
-#SBATCH --gres=gpu:a100:1
 #SBATCH --nodes=1
-#SBATCH --ntasks=1
+#SBATCH --gres=gpu:a100:1
 #SBATCH --cpus-per-task=4
-#SBATCH --time=01:00:00
 #SBATCH --mem=32GB
+#SBATCH --time=04:00:00
 #SBATCH --output=mllm_job_%j.out
 #SBATCH --error=mllm_job_%j.err
 
@@ -19,12 +18,6 @@ echo "Start Time: $(date)"
 echo "=========================================="
 echo ""
 
-# Load CUDA modules
-echo "Loading CUDA modules..."
-module load cuda/12.1 2>/dev/null || module load cuda/11.8 2>/dev/null || module load cuda 2>/dev/null || echo "Warning: CUDA module not found"
-module load cudnn/8.9.7 2>/dev/null || module load cudnn 2>/dev/null || echo "Warning: cuDNN module not found"
-echo ""
-
 # Verify code directory exists
 CODE_PATH="/projects/scdatahub/amol_dmt/image_to_text_runs/MLLM-House-Search"
 if [ ! -d "$CODE_PATH" ]; then
@@ -32,6 +25,14 @@ if [ ! -d "$CODE_PATH" ]; then
     exit 1
 fi
 echo "Code directory: $CODE_PATH"
+echo ""
+
+# Load required modules
+echo "Loading modules..."
+module purge
+module load anaconda3/2024.06
+module load cuda/12.1.1
+echo "Modules loaded successfully"
 echo ""
 
 # Set paths and environment
@@ -52,20 +53,19 @@ echo ""
 
 # Activate conda environment
 echo "Activating conda environment..."
-source /shared/centos7/anaconda3/2024.06/etc/profile.d/conda.sh
-conda activate qwen-env
+source activate qwen-env
 if [ $? -ne 0 ]; then
-    echo "ERROR: Failed to activate conda environment"
+    echo "ERROR: Failed to activate conda environment 'qwen-env'"
     exit 1
 fi
-echo "Environment activated"
+echo "Environment activated: qwen-env"
 echo ""
 
 # Verify GPU availability
 echo "=========================================="
 echo "GPU Verification"
 echo "=========================================="
-python -c "import torch; print(f'PyTorch: {torch.__version__}'); print(f'CUDA available: {torch.cuda.is_available()}'); print(f'GPU count: {torch.cuda.device_count()}'); print(f'GPU name: {torch.cuda.get_device_name(0) if torch.cuda.is_available() else \"N/A\"}')"
+python -c "import torch; print(f'PyTorch: {torch.__version__}'); print(f'CUDA available: {torch.cuda.is_available()}'); print(f'CUDA version: {torch.version.cuda}'); print(f'GPU count: {torch.cuda.device_count()}'); print(f'GPU: {torch.cuda.get_device_name(0) if torch.cuda.is_available() else \"N/A\"}')"
 
 # Exit if no GPU detected
 python -c "import torch; import sys; sys.exit(0 if torch.cuda.is_available() else 1)"
