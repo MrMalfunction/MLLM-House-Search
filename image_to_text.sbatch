@@ -1,7 +1,7 @@
 #!/bin/bash
 #SBATCH --job-name=mllm_house_search
 #SBATCH --partition=gpu
-#SBATCH --gres=gpu:a100:1
+#SBATCH --gres=gpu:v100-pcie:1
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=4
@@ -54,56 +54,16 @@ else
     exit 1
 fi
 
-echo "================================"
-echo "Copying model to local storage to avoid network latency..."
 
-# Source model location (network storage)
-SOURCE_MODEL_PATH="/projects/scdatahub/amol_dmt/model/8b"
-
-# Local model path (on scratch - much faster)
-LOCAL_MODEL_PATH="$JOB_DIR/model_cache"
-
-# Check if source model exists and copy it
-if [ -d "$SOURCE_MODEL_PATH" ] && [ "$(ls -A $SOURCE_MODEL_PATH)" ]; then
-    echo "Found model at: $SOURCE_MODEL_PATH"
-    echo "Copying to local storage: $LOCAL_MODEL_PATH"
-    echo "This may take a few minutes..."
-
-    mkdir -p "$LOCAL_MODEL_PATH"
-
-    # Use rsync for faster copying (if available), otherwise use cp
-    if command -v rsync &> /dev/null; then
-        echo "Using rsync for faster transfer..."
-        rsync -avh --progress "$SOURCE_MODEL_PATH/" "$LOCAL_MODEL_PATH/"
-    else
-        echo "Using cp to copy files..."
-        cp -rv "$SOURCE_MODEL_PATH"/* "$LOCAL_MODEL_PATH/"
-    fi
-
-    if [ $? -eq 0 ]; then
-        echo "Model copied successfully to local storage"
-        echo "Model size in local storage:"
-        du -sh "$LOCAL_MODEL_PATH"
-    else
-        echo "Warning: Model copy failed, will download to local storage instead"
-        rm -rf "$LOCAL_MODEL_PATH"/*
-    fi
-else
-    echo "Source model not found at $SOURCE_MODEL_PATH"
-    echo "Model will be downloaded to local storage instead"
-    mkdir -p "$LOCAL_MODEL_PATH"
-fi
-
-echo "================================"
 echo "Setting environment variables for main.py..."
 
 # Set environment variables for main.py
-# model_path: Use local copy of the model for faster loading
-export model_path="$LOCAL_MODEL_PATH"
+# model_path: Use model directly from projects directory
+export model_path="/projects/scdatahub/amol_dmt/model/8b"
 
 # json_input_path: Input JSON file with house image associations
 # Use the correct JSON file name
-export json_input_path="${json_input_path:-/projects/scdatahub/amol_dmt/image_to_text_runs/MLLM-House-Search/house_images_associateions.json}"
+export json_input_path="${json_input_path:-/projects/scdatahub/amol_dmt/image_to_text_runs/MLLM-House-Search/house_image_associations.json}"
 
 # output_path: Output parquet file path
 # Save to the output directory in /projects/scdatahub
@@ -114,13 +74,17 @@ OUTPUT_DIR="/projects/scdatahub/amol_dmt/image_to_text_runs/output"
 mkdir -p "$OUTPUT_DIR"
 
 echo "Environment variables set:"
-echo "  model_path: $model_path (LOCAL SCRATCH STORAGE)"
+echo "  model_path: $model_path"
 echo "  json_input_path: $json_input_path"
 echo "  output_path: $output_path"
 
 # Set PyTorch optimizations for transformers
 export PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:512
 echo "PyTorch optimizations configured"
+
+echo "================================"
+echo "Setting Python unbuffered mode for real-time logging..."
+export PYTHONUNBUFFERED=1
 
 echo "================================"
 echo "Activating conda environment..."
@@ -139,12 +103,16 @@ fi
 
 echo "================================"
 echo "Running main.py..."
+echo "Input: $json_input_path"
+echo "Output: $output_path"
+echo "Model: $model_path"
+echo "================================"
 
 # Navigate to the image_to_text_pipeline directory
 cd "$CODE_PATH/image_to_text_pipeline"
 
-# Run the main script with proper arguments
-python main.py \
+# Run the main script with proper arguments (using python -u for unbuffered output)
+python -u main.py \
     --input "$json_input_path" \
     --output "$output_path" \
     --model-path "$model_path" \
