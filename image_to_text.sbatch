@@ -1,12 +1,12 @@
 #!/bin/bash
 #SBATCH --job-name=mllm_house_search
 #SBATCH --partition=gpu
-#SBATCH --gres=gpu:v100-pcie:1
+#SBATCH --gres=gpu:a100:1
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
-#SBATCH --cpus-per-task=1
+#SBATCH --cpus-per-task=4
 #SBATCH --time=01:00:00
-#SBATCH --mem=4GB
+#SBATCH --mem=32GB
 #SBATCH --output=mllm_job_%j.out
 #SBATCH --error=mllm_job_%j.err
 
@@ -56,11 +56,51 @@ else
 fi
 
 echo "================================"
+echo "Copying model to local storage to avoid network latency..."
+
+# Source model location (network storage)
+SOURCE_MODEL_PATH="${model_path:-/projects/scdatahub/amol_dmt/model/8b}"
+
+# Local model path (on scratch - much faster)
+LOCAL_MODEL_PATH="$JOB_DIR/model_cache"
+
+# Check if source model exists and copy it
+if [ -d "$SOURCE_MODEL_PATH" ] && [ "$(ls -A $SOURCE_MODEL_PATH)" ]; then
+    echo "Found model at: $SOURCE_MODEL_PATH"
+    echo "Copying to local storage: $LOCAL_MODEL_PATH"
+    echo "This may take a few minutes..."
+
+    mkdir -p "$LOCAL_MODEL_PATH"
+
+    # Use rsync for faster copying (if available), otherwise use cp
+    if command -v rsync &> /dev/null; then
+        echo "Using rsync for faster transfer..."
+        rsync -avh --progress "$SOURCE_MODEL_PATH/" "$LOCAL_MODEL_PATH/"
+    else
+        echo "Using cp to copy files..."
+        cp -rv "$SOURCE_MODEL_PATH"/* "$LOCAL_MODEL_PATH/"
+    fi
+
+    if [ $? -eq 0 ]; then
+        echo "Model copied successfully to local storage"
+        echo "Model size in local storage:"
+        du -sh "$LOCAL_MODEL_PATH"
+    else
+        echo "Warning: Model copy failed, will download to local storage instead"
+        rm -rf "$LOCAL_MODEL_PATH"/*
+    fi
+else
+    echo "Source model not found at $SOURCE_MODEL_PATH"
+    echo "Model will be downloaded to local storage instead"
+    mkdir -p "$LOCAL_MODEL_PATH"
+fi
+
+echo "================================"
 echo "Setting environment variables for main.py..."
 
 # Set environment variables for main.py
-# model_path: Location of the ML model (default: /projects/scdatahub/amol_dmt/model/8b)
-export model_path="${model_path:-/projects/scdatahub/amol_dmt/model/8b}"
+# model_path: Use local copy of the model for faster loading
+export model_path="$LOCAL_MODEL_PATH"
 
 # json_input_path: Input JSON file with house image associations
 # Default looks for it in the cloned repository's root directory
@@ -74,29 +114,13 @@ export output_path="${output_path:-$JOB_DIR/output}"
 mkdir -p "$output_path"
 
 echo "Environment variables set:"
-echo "  model_path: $model_path"
+echo "  model_path: $model_path (LOCAL SCRATCH STORAGE)"
 echo "  json_input_path: $json_input_path"
 echo "  output_path: $output_path"
 
-# Optional: Clean torch compile cache if CLEAR_CACHE=1 is set
-# To clear cache: export CLEAR_CACHE=1 before running sbatch
-if [ "$CLEAR_CACHE" = "1" ]; then
-    echo "CLEAR_CACHE=1 detected. Cleaning torch compile cache..."
-    TORCH_CACHE_DIR="$model_path/.torch_cache"
-    if [ -d "$TORCH_CACHE_DIR/vllm" ]; then
-        echo "Removing $TORCH_CACHE_DIR/vllm"
-        rm -rf "$TORCH_CACHE_DIR/vllm"
-        echo "Cache cleared successfully"
-    else
-        echo "No cache directory found at $TORCH_CACHE_DIR/vllm"
-    fi
-else
-    echo "Using existing cache (set CLEAR_CACHE=1 to clear cache)"
-fi
-
-# Disable torch.compile to avoid cache corruption issues on V100
-export VLLM_TORCH_COMPILE_LEVEL=0
-echo "Disabled torch.compile (VLLM_TORCH_COMPILE_LEVEL=0)"
+# Set PyTorch optimizations for transformers
+export PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:512
+echo "PyTorch optimizations configured"
 
 echo "================================"
 echo "Activating conda environment..."

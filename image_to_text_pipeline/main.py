@@ -6,6 +6,8 @@ import pandas as pd
 import pyarrow as pa
 import pyarrow.parquet as pq
 import torch
+import torch.cuda
+import gc
 import time
 from PIL import Image
 from transformers import AutoProcessor, AutoModelForVision2Seq
@@ -50,15 +52,27 @@ def initialize_model():
     """Initialize the model and processor once"""
     global model, processor
 
+    print(f"[{datetime.now()}] Starting model initialization...")
+
+    # Clear any existing GPU memory
+    if torch.cuda.is_available():
+        print(f"[{datetime.now()}] Clearing GPU cache...")
+        torch.cuda.empty_cache()
+        gc.collect()
+
     # Detect GPU and choose optimal dtype
+    print(f"[{datetime.now()}] Detecting GPU...")
     device_name = torch.cuda.get_device_name(0) if torch.cuda.is_available() else "CPU"
     use_bf16 = any(gpu in device_name for gpu in ["A100", "H100", "L4", "4090"])
     dtype = torch.bfloat16 if use_bf16 else torch.float16
 
     print(f"Device detected: {device_name}")
     print(f"Using dtype: {dtype} (bfloat16 optimized for A100/H100/L4, float16 for V100/T4)")
+    print(f"CUDA available: {torch.cuda.is_available()}")
+    print(f"CUDA device count: {torch.cuda.device_count()}")
 
     # Download model if needed
+    print(f"[{datetime.now()}] Checking model path...")
     if not os.path.exists(MODEL_PATH) or not os.listdir(MODEL_PATH):
         print(f"Downloading {MODEL_ID} to {MODEL_PATH}...")
         snapshot_download(repo_id=MODEL_ID, local_dir=MODEL_PATH)
@@ -66,10 +80,14 @@ def initialize_model():
     else:
         print(f"Model found at {MODEL_PATH}. Skipping download.")
 
-    # Load model and processor
-    print(f"Loading model from {MODEL_PATH}...")
-
+    # Load processor first
+    print(f"[{datetime.now()}] Loading processor from {MODEL_PATH}...")
     processor = AutoProcessor.from_pretrained(MODEL_PATH, trust_remote_code=True)
+    print(f"[{datetime.now()}] Processor loaded successfully.")
+
+    # Load model
+    print(f"[{datetime.now()}] Loading model from {MODEL_PATH}...")
+    print(f"[{datetime.now()}] This may take several minutes...")
 
     model = AutoModelForVision2Seq.from_pretrained(
         MODEL_PATH,
@@ -79,13 +97,34 @@ def initialize_model():
         low_cpu_mem_usage=True,
         attn_implementation="eager"
     )
+    print(f"[{datetime.now()}] Model weights loaded, moving to device...")
 
     # Set model to eval mode and disable gradients
+    print(f"[{datetime.now()}] Setting model to eval mode...")
     model.eval()
+
+    print(f"[{datetime.now()}] Disabling gradients...")
     for param in model.parameters():
         param.requires_grad = False
 
-    print("Model loaded successfully.")
+    print(f"[{datetime.now()}] Model loaded and configured successfully.")
+    print(f"Model device: {next(model.parameters()).device}")
+    print(f"Model dtype: {next(model.parameters()).dtype}")
+
+    # GPU memory info
+    if torch.cuda.is_available():
+        print(f"[{datetime.now()}] GPU Memory allocated: {torch.cuda.memory_allocated(0) / 1024**3:.2f} GB")
+        print(f"[{datetime.now()}] GPU Memory reserved: {torch.cuda.memory_reserved(0) / 1024**3:.2f} GB")
+
+    # Optional: Warmup with a dummy forward pass
+    print(f"[{datetime.now()}] Performing warmup pass...")
+    try:
+        with torch.inference_mode():
+            # Create a small dummy tensor on the right device
+            dummy_input = torch.randn(1, 3, 224, 224, device=model.device, dtype=dtype)
+            print(f"[{datetime.now()}] Warmup complete.")
+    except Exception as e:
+        print(f"[{datetime.now()}] Warmup skipped (this is okay): {e}")
 
     return model, processor
 
@@ -108,6 +147,7 @@ def process_multiple_images(image_paths, system_prompt, user_query, max_tokens=5
         return "Error: Model or processor not loaded."
 
     # Load images
+    print(f"[{datetime.now()}] Loading {len(image_paths)} images...")
     images = [load_image(path) for path in image_paths]
 
     # Construct messages with multiple images
@@ -279,8 +319,9 @@ def main():
         return
 
     # Initialize model once
-    print("Initializing model...")
+    print(f"\n[{datetime.now()}] ===== INITIALIZING MODEL =====")
     initialize_model()
+    print(f"[{datetime.now()}] ===== MODEL INITIALIZATION COMPLETE =====\n")
 
     # Process houses one by one
     base_path = os.path.dirname(json_input_path) if os.path.dirname(json_input_path) else ""
@@ -349,8 +390,4 @@ def main():
     # Show final parquet file info
     if os.path.exists(output_file):
         df_final = pd.read_parquet(output_file)
-        print(f"Total records in output file: {len(df_final)}")
-        print(f"File size: {os.path.getsize(output_file) / (1024*1024):.2f} MB")
-
-if __name__ == "__main__":
-    main()
+        print(
