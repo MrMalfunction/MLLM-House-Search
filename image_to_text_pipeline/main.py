@@ -25,16 +25,17 @@ MODEL_ID = "Qwen/Qwen3-VL-8B-Instruct"
 SYSTEM_PROMPT = """Analyze this residential property using 4 images (frontal, kitchen, bedroom, bathroom). Generate a dense, keyword-rich description for semantic search. Include: architectural style, exterior features, interior finishes, flooring, kitchen (cabinets, countertops, appliances), bathroom (vanity, tub/shower, fixtures), lighting, and overall quality. Omit features not visible."""
 
 class HouseDescriptionGenerator:
-    def __init__(self, model_path=None, use_cache=True, gpu_id=0):
+    def __init__(self, model_path=None, use_cache=True, worker_id=0):
         self.model = None
         self.processor = None
         self.model_path = model_path or "./models/qwen3-vl-8b"
         self.use_cache = use_cache
-        self.gpu_id = gpu_id
+        self.worker_id = worker_id
+        self.gpu_id = 0  # All workers share GPU 0
 
     def initialize_model(self):
         """Initialize the model and processor"""
-        print(f"[Worker {self.gpu_id}][{datetime.now().strftime('%H:%M:%S')}] Initializing model...", flush=True)
+        print(f"[Worker {self.worker_id}][{datetime.now().strftime('%H:%M:%S')}] Initializing model...", flush=True)
 
         # Clear GPU memory
         if torch.cuda.is_available():
@@ -42,24 +43,24 @@ class HouseDescriptionGenerator:
             torch.cuda.empty_cache()
             gc.collect()
             device_name = torch.cuda.get_device_name(self.gpu_id)
-            print(f"[Worker {self.gpu_id}] GPU detected: {device_name}", flush=True)
+            print(f"[Worker {self.worker_id}] GPU detected: {device_name} (GPU {self.gpu_id})", flush=True)
         else:
-            print(f"[Worker {self.gpu_id}] No GPU detected, using CPU", flush=True)
+            print(f"[Worker {self.worker_id}] No GPU detected, using CPU", flush=True)
 
         # Determine dtype
         if torch.cuda.is_available():
             device_name = torch.cuda.get_device_name(self.gpu_id)
             use_bf16 = any(gpu in device_name for gpu in ["A100", "H100", "L4", "4090"])
             dtype = torch.bfloat16 if use_bf16 else torch.float16
-            print(f"[Worker {self.gpu_id}] Using dtype: {dtype}", flush=True)
+            print(f"[Worker {self.worker_id}] Using dtype: {dtype}", flush=True)
         else:
             dtype = torch.float32
 
         # Load processor and model
-        print(f"[Worker {self.gpu_id}] Loading from: {self.model_path}", flush=True)
+        print(f"[Worker {self.worker_id}] Loading from: {self.model_path}", flush=True)
 
         if not os.path.exists(self.model_path):
-            print(f"[Worker {self.gpu_id}] Model not found locally. Downloading {MODEL_ID}...", flush=True)
+            print(f"[Worker {self.worker_id}] Model not found locally. Downloading {MODEL_ID}...", flush=True)
             from huggingface_hub import snapshot_download
             snapshot_download(repo_id=MODEL_ID, local_dir=self.model_path)
 
@@ -71,7 +72,7 @@ class HouseDescriptionGenerator:
         self.model = AutoModelForVision2Seq.from_pretrained(
             self.model_path,
             torch_dtype=dtype,
-            device_map={"": self.gpu_id},  # Force to specific GPU
+            device_map={"": self.gpu_id},  # All workers share GPU 0
             trust_remote_code=True,
             low_cpu_mem_usage=True,
             attn_implementation="eager"
@@ -81,10 +82,10 @@ class HouseDescriptionGenerator:
         for param in self.model.parameters():
             param.requires_grad = False
 
-        print(f"[Worker {self.gpu_id}] Model loaded successfully on {next(self.model.parameters()).device}", flush=True)
+        print(f"[Worker {self.worker_id}] Model loaded successfully on {next(self.model.parameters()).device}", flush=True)
 
         if torch.cuda.is_available():
-            print(f"[Worker {self.gpu_id}] GPU Memory: {torch.cuda.memory_allocated(self.gpu_id) / 1024**3:.2f} GB", flush=True)
+            print(f"[Worker {self.worker_id}] GPU Memory: {torch.cuda.memory_allocated(self.gpu_id) / 1024**3:.2f} GB", flush=True)
 
     def load_image(self, path):
         """Load and convert image to RGB"""
@@ -198,7 +199,7 @@ class HouseDescriptionGenerator:
             return result
 
         except Exception as e:
-            print(f"[Worker {self.gpu_id}] Error processing house {house_id}: {e}", flush=True)
+            print(f"[Worker {self.worker_id}] Error processing house {house_id}: {e}", flush=True)
             traceback.print_exc()
             sys.stdout.flush()
             return None
@@ -209,8 +210,8 @@ def worker_process(worker_id, work_queue, result_queue, model_path, base_path, s
     try:
         print(f"[Worker {worker_id}] Starting worker process", flush=True)
 
-        # Initialize generator for this worker
-        generator = HouseDescriptionGenerator(model_path=model_path, gpu_id=worker_id)
+        # Initialize generator for this worker (all share GPU 0)
+        generator = HouseDescriptionGenerator(model_path=model_path, worker_id=worker_id)
         generator.initialize_model()
 
         print(f"[Worker {worker_id}] Ready to process houses", flush=True)
