@@ -29,9 +29,9 @@ echo ""
 
 # Load required modules
 echo "Loading modules..."
-module purge
+# module purge
 module load anaconda3/2024.06
-module load cuda/12.1.1
+module load cuda/12.8.0
 echo "Modules loaded successfully"
 echo ""
 

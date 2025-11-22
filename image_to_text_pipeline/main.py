@@ -11,6 +11,10 @@ import time
 from PIL import Image
 from transformers import AutoProcessor, AutoModelForVision2Seq
 from qwen_vl_utils import process_vision_info
+import multiprocessing as mp
+from queue import Empty
+import threading
+import traceback
 
 # Force unbuffered output
 sys.stdout = os.fdopen(sys.stdout.fileno(), 'w', buffering=1)
@@ -21,39 +25,41 @@ MODEL_ID = "Qwen/Qwen3-VL-8B-Instruct"
 SYSTEM_PROMPT = """Analyze this residential property using 4 images (frontal, kitchen, bedroom, bathroom). Generate a dense, keyword-rich description for semantic search. Include: architectural style, exterior features, interior finishes, flooring, kitchen (cabinets, countertops, appliances), bathroom (vanity, tub/shower, fixtures), lighting, and overall quality. Omit features not visible."""
 
 class HouseDescriptionGenerator:
-    def __init__(self, model_path=None, use_cache=True):
+    def __init__(self, model_path=None, use_cache=True, gpu_id=0):
         self.model = None
         self.processor = None
         self.model_path = model_path or "./models/qwen3-vl-8b"
         self.use_cache = use_cache
+        self.gpu_id = gpu_id
 
     def initialize_model(self):
         """Initialize the model and processor"""
-        print(f"[{datetime.now().strftime('%H:%M:%S')}] Initializing model...", flush=True)
+        print(f"[Worker {self.gpu_id}][{datetime.now().strftime('%H:%M:%S')}] Initializing model...", flush=True)
 
         # Clear GPU memory
         if torch.cuda.is_available():
+            torch.cuda.set_device(self.gpu_id)
             torch.cuda.empty_cache()
             gc.collect()
-            device_name = torch.cuda.get_device_name(0)
-            print(f"GPU detected: {device_name}", flush=True)
+            device_name = torch.cuda.get_device_name(self.gpu_id)
+            print(f"[Worker {self.gpu_id}] GPU detected: {device_name}", flush=True)
         else:
-            print("No GPU detected, using CPU", flush=True)
+            print(f"[Worker {self.gpu_id}] No GPU detected, using CPU", flush=True)
 
         # Determine dtype
         if torch.cuda.is_available():
-            device_name = torch.cuda.get_device_name(0)
+            device_name = torch.cuda.get_device_name(self.gpu_id)
             use_bf16 = any(gpu in device_name for gpu in ["A100", "H100", "L4", "4090"])
             dtype = torch.bfloat16 if use_bf16 else torch.float16
-            print(f"Using dtype: {dtype}", flush=True)
+            print(f"[Worker {self.gpu_id}] Using dtype: {dtype}", flush=True)
         else:
             dtype = torch.float32
 
         # Load processor and model
-        print(f"Loading from: {self.model_path}", flush=True)
+        print(f"[Worker {self.gpu_id}] Loading from: {self.model_path}", flush=True)
 
         if not os.path.exists(self.model_path):
-            print(f"Model not found locally. Downloading {MODEL_ID}...", flush=True)
+            print(f"[Worker {self.gpu_id}] Model not found locally. Downloading {MODEL_ID}...", flush=True)
             from huggingface_hub import snapshot_download
             snapshot_download(repo_id=MODEL_ID, local_dir=self.model_path)
 
@@ -65,7 +71,7 @@ class HouseDescriptionGenerator:
         self.model = AutoModelForVision2Seq.from_pretrained(
             self.model_path,
             torch_dtype=dtype,
-            device_map="auto",
+            device_map={"": self.gpu_id},  # Force to specific GPU
             trust_remote_code=True,
             low_cpu_mem_usage=True,
             attn_implementation="eager"
@@ -75,10 +81,10 @@ class HouseDescriptionGenerator:
         for param in self.model.parameters():
             param.requires_grad = False
 
-        print(f"Model loaded successfully on {next(self.model.parameters()).device}", flush=True)
+        print(f"[Worker {self.gpu_id}] Model loaded successfully on {next(self.model.parameters()).device}", flush=True)
 
         if torch.cuda.is_available():
-            print(f"GPU Memory: {torch.cuda.memory_allocated(0) / 1024**3:.2f} GB", flush=True)
+            print(f"[Worker {self.gpu_id}] GPU Memory: {torch.cuda.memory_allocated(self.gpu_id) / 1024**3:.2f} GB", flush=True)
 
     def load_image(self, path):
         """Load and convert image to RGB"""
@@ -94,10 +100,8 @@ class HouseDescriptionGenerator:
         if self.model is None or self.processor is None:
             raise RuntimeError("Model not initialized. Call initialize_model() first.")
 
-        print(f"    Loading {len(image_paths)} images...", flush=True)
         # Load images
         images = [self.load_image(path) for path in image_paths]
-        print(f"    Images loaded successfully", flush=True)
 
         # Construct messages
         messages = [
@@ -126,7 +130,6 @@ class HouseDescriptionGenerator:
         ).to(self.model.device)
 
         # Generate
-        print(f"    Starting generation (max {max_tokens} tokens)...", flush=True)
         start_time = time.time()
         with torch.inference_mode():
             generated_ids = self.model.generate(
@@ -140,7 +143,6 @@ class HouseDescriptionGenerator:
                 eos_token_id=self.processor.tokenizer.eos_token_id,
             )
         generation_time = time.time() - start_time
-        print(f"    Generation completed in {generation_time:.2f}s", flush=True)
 
         # Decode
         generated_ids_trimmed = [
@@ -196,16 +198,104 @@ class HouseDescriptionGenerator:
             return result
 
         except Exception as e:
-            print(f"Error processing house {house_id}: {e}", flush=True)
-            import traceback
+            print(f"[Worker {self.gpu_id}] Error processing house {house_id}: {e}", flush=True)
             traceback.print_exc()
             sys.stdout.flush()
             return None
 
 
+def worker_process(worker_id, work_queue, result_queue, model_path, base_path, stop_event):
+    """Worker process that processes houses from the queue"""
+    try:
+        print(f"[Worker {worker_id}] Starting worker process", flush=True)
+
+        # Initialize generator for this worker
+        generator = HouseDescriptionGenerator(model_path=model_path, gpu_id=worker_id)
+        generator.initialize_model()
+
+        print(f"[Worker {worker_id}] Ready to process houses", flush=True)
+
+        processed_count = 0
+        while not stop_event.is_set():
+            try:
+                # Get work from queue with timeout
+                house_data = work_queue.get(timeout=1)
+
+                if house_data is None:  # Poison pill
+                    print(f"[Worker {worker_id}] Received stop signal", flush=True)
+                    break
+
+                house_id = house_data['house_id']
+                print(f"[Worker {worker_id}] Processing house {house_id}...", flush=True)
+
+                result = generator.process_house(house_data, base_path)
+
+                if result:
+                    result_queue.put(('success', result))
+                    processed_count += 1
+                    print(f"[Worker {worker_id}] ✓ Completed house {house_id} ({result['generation_time_seconds']:.2f}s) [Total: {processed_count}]", flush=True)
+                else:
+                    result_queue.put(('failed', house_id))
+                    print(f"[Worker {worker_id}] ✗ Failed house {house_id}", flush=True)
+
+            except Empty:
+                continue
+            except Exception as e:
+                print(f"[Worker {worker_id}] Error in worker loop: {e}", flush=True)
+                traceback.print_exc()
+
+        print(f"[Worker {worker_id}] Worker shutting down. Processed {processed_count} houses.", flush=True)
+
+    except Exception as e:
+        print(f"[Worker {worker_id}] Fatal error in worker: {e}", flush=True)
+        traceback.print_exc()
+
+
+def result_writer_thread(result_queue, output_file, stop_event):
+    """Thread that writes results to file as they come in"""
+    successful = 0
+    failed = 0
+
+    while not stop_event.is_set():
+        try:
+            result_type, result_data = result_queue.get(timeout=1)
+
+            if result_type == 'stop':
+                break
+            elif result_type == 'success':
+                # Save result immediately
+                try:
+                    df_new = pd.DataFrame([result_data])
+                    if os.path.exists(output_file):
+                        df_existing = pd.read_parquet(output_file)
+                        df_combined = pd.concat([df_existing, df_new], ignore_index=True)
+                        df_combined.to_parquet(output_file, index=False)
+                        total = len(df_combined)
+                    else:
+                        df_new.to_parquet(output_file, index=False)
+                        total = 1
+                    successful += 1
+                    print(f"[Writer] 💾 Saved house {result_data['house_id']} (Total: {total} houses, {successful} this run)", flush=True)
+                except Exception as e:
+                    print(f"[Writer] ⚠️ Failed to save: {e}", flush=True)
+                    traceback.print_exc()
+            elif result_type == 'failed':
+                failed += 1
+                print(f"[Writer] Failed house {result_data}", flush=True)
+
+        except Empty:
+            continue
+        except Exception as e:
+            print(f"[Writer] Error in writer thread: {e}", flush=True)
+            traceback.print_exc()
+
+    print(f"[Writer] Writer thread shutting down. Saved {successful}, failed {failed}", flush=True)
+    return successful, failed
+
+
 def main():
     parser = argparse.ArgumentParser(
-        description="Generate descriptions for house images using Qwen3-VL",
+        description="Generate descriptions for house images using Qwen3-VL with parallel processing",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter
     )
     parser.add_argument(
@@ -229,16 +319,17 @@ def main():
         help="Resume processing (skip already processed houses)"
     )
     parser.add_argument(
-        "--save-every", "-s",
+        "--num-workers", "-w",
         type=int,
-        default=5,
-        help="Save progress after processing this many houses"
+        default=2,
+        help="Number of parallel workers (models to run)"
     )
 
     args = parser.parse_args()
 
-    print(f"Starting job at {datetime.now()}", flush=True)
+    print(f"Starting parallel processing job at {datetime.now()}", flush=True)
     print(f"Arguments: {args}", flush=True)
+    print(f"Number of workers: {args.num_workers}", flush=True)
 
     # Validate input file
     if not os.path.exists(args.input):
@@ -262,8 +353,8 @@ def main():
     if args.resume and os.path.exists(args.output):
         try:
             print(f"Resume mode: Reading existing output file {args.output}...", flush=True)
-            df = pd.read_parquet(args.output)
-            processed_ids = set(df['house_id'].tolist())
+            df_temp = pd.read_parquet(args.output)
+            processed_ids = set(df_temp['house_id'].tolist())
             print(f"Resuming: {len(processed_ids)} houses already processed", flush=True)
             print(f"Processed house IDs: {sorted(list(processed_ids))[:10]}..." if len(processed_ids) > 10 else f"Processed house IDs: {sorted(list(processed_ids))}", flush=True)
         except Exception as e:
@@ -271,6 +362,7 @@ def main():
     elif args.resume:
         print(f"Resume mode enabled but output file does not exist yet", flush=True)
 
+    # Filter out already processed houses
     houses_to_process = [
         h for h in houses_data
         if h['house_id'] not in processed_ids
@@ -278,99 +370,92 @@ def main():
 
     if not houses_to_process:
         print("All houses already processed!", flush=True)
+        if os.path.exists(args.output):
+            df_temp = pd.read_parquet(args.output)
+            print(f"Total records in output file: {len(df_temp)}", flush=True)
         return
 
-    print(f"Will process {len(houses_to_process)} houses", flush=True)
+    print(f"Will process {len(houses_to_process)} remaining houses", flush=True)
     print(f"First 10 houses to process: {[h['house_id'] for h in houses_to_process[:10]]}", flush=True)
 
-    # Initialize generator
-    generator = HouseDescriptionGenerator(model_path=args.model_path)
-    generator.initialize_model()
+    # Setup multiprocessing
+    mp.set_start_method('spawn', force=True)
+    work_queue = mp.Queue(maxsize=args.num_workers * 2)
+    result_queue = mp.Queue()
+    stop_event = mp.Event()
 
-    # Process houses
     base_path = os.path.dirname(args.input) if os.path.dirname(args.input) else "."
-    results = []
-    successful = 0
-    failed = 0
-    start_time = datetime.now()
+
+    # Start worker processes
+    workers = []
+    for worker_id in range(args.num_workers):
+        p = mp.Process(
+            target=worker_process,
+            args=(worker_id, work_queue, result_queue, args.model_path, base_path, stop_event)
+        )
+        p.start()
+        workers.append(p)
+        print(f"Started worker {worker_id} (PID: {p.pid})", flush=True)
+
+    # Start result writer thread
+    writer_thread = threading.Thread(
+        target=result_writer_thread,
+        args=(result_queue, args.output, stop_event)
+    )
+    writer_thread.start()
 
     print(f"\n{'='*60}", flush=True)
-    print("STARTING PROCESSING", flush=True)
+    print("STARTING PARALLEL PROCESSING", flush=True)
     print(f"{'='*60}\n", flush=True)
 
-    for idx, house_data in enumerate(houses_to_process):
-        house_id = house_data['house_id']
-        print(f"[{idx+1}/{len(houses_to_process)}] Processing house {house_id}...", flush=True)
+    start_time = datetime.now()
 
-        try:
-            result = generator.process_house(house_data, base_path)
+    # Feed work to queue
+    try:
+        for house_data in houses_to_process:
+            work_queue.put(house_data)
 
-            if result:
-                results.append(result)
-                successful += 1
-                print(f"  ✓ Success ({result['generation_time_seconds']:.2f}s)", flush=True)
-                print(f"  Description: {result['description'][:100]}...", flush=True)
+        # Send poison pills to stop workers
+        for _ in range(args.num_workers):
+            work_queue.put(None)
 
-                # Save after every single house
-                try:
-                    df_new = pd.DataFrame(results)
-                    if os.path.exists(args.output):
-                        df_existing = pd.read_parquet(args.output)
-                        df_combined = pd.concat([df_existing, df_new], ignore_index=True)
-                        df_combined.to_parquet(args.output, index=False)
-                        print(f"  💾 Saved to {args.output} (Total: {len(df_combined)} houses)", flush=True)
-                    else:
-                        df_new.to_parquet(args.output, index=False)
-                        print(f"  💾 Saved to {args.output} (Total: {len(df_new)} houses)", flush=True)
-                    results = []
-                except Exception as save_error:
-                    print(f"  ⚠️  Warning: Failed to save: {save_error}", flush=True)
-                    traceback.print_exc()
-                    sys.stdout.flush()
-            else:
-                failed += 1
-                print(f"  ✗ Failed", flush=True)
+        print(f"[Main] All {len(houses_to_process)} houses queued for processing", flush=True)
 
-        except Exception as e:
-            failed += 1
-            print(f"  ✗ Error: {e}", flush=True)
-            import traceback
-            traceback.print_exc()
-            sys.stdout.flush()
+        # Wait for workers to finish
+        for i, worker in enumerate(workers):
+            worker.join()
+            print(f"[Main] Worker {i} finished", flush=True)
 
-        # Progress stats
-        elapsed = (datetime.now() - start_time).total_seconds()
-        avg_time = elapsed / (idx + 1)
-        remaining = len(houses_to_process) - (idx + 1)
-        eta_minutes = (remaining * avg_time) / 60
+        # Stop writer thread
+        result_queue.put(('stop', None))
+        writer_thread.join()
 
-        print(f"  Progress: {successful} ok, {failed} failed, {remaining} left (ETA: {eta_minutes:.1f}m)\n", flush=True)
+    except KeyboardInterrupt:
+        print("\n[Main] Interrupted! Stopping workers...", flush=True)
+        stop_event.set()
+        for worker in workers:
+            worker.terminate()
+            worker.join()
+        writer_thread.join()
 
-    # Save any remaining results (should be empty now since we save after each house)
-    if results:
-        df_new = pd.DataFrame(results)
-        if os.path.exists(args.output):
-            df_existing = pd.read_parquet(args.output)
-            df_combined = pd.concat([df_existing, df_new], ignore_index=True)
-            df_combined.to_parquet(args.output, index=False)
-        else:
-            df_new.to_parquet(args.output, index=False)
-        print(f"  💾 Saved final batch to {args.output}", flush=True)
+    total_time = (datetime.now() - start_time).total_seconds()
 
     # Final summary
-    total_time = (datetime.now() - start_time).total_seconds()
     print(f"\n{'='*60}", flush=True)
     print("PROCESSING COMPLETE", flush=True)
     print(f"{'='*60}", flush=True)
-    print(f"Total processed: {successful}", flush=True)
-    print(f"Failed: {failed}", flush=True)
-    print(f"Total time: {total_time/60:.1f} minutes", flush=True)
-    print(f"Average time per house: {total_time/successful:.1f} seconds" if successful > 0 else "", flush=True)
+    print(f"Total time for this run: {total_time/60:.1f} minutes", flush=True)
     print(f"Output: {args.output}", flush=True)
 
     if os.path.exists(args.output):
         df_final = pd.read_parquet(args.output)
-        print(f"Final file contains: {len(df_final)} records", flush=True)
+        total_in_file = len(df_final)
+        newly_processed = total_in_file - len(processed_ids)
+        print(f"\nFinal file contains: {total_in_file} total records", flush=True)
+        print(f"Newly processed in this run: {newly_processed}", flush=True)
+        print(f"Previously processed: {len(processed_ids)}", flush=True)
+        if total_in_file > 0:
+            print(f"Average time per house: {total_time/newly_processed:.1f} seconds" if newly_processed > 0 else "", flush=True)
         print(f"House IDs in final file: {sorted(df_final['house_id'].tolist())[:10]}..." if len(df_final) > 10 else f"House IDs in final file: {sorted(df_final['house_id'].tolist())}", flush=True)
 
 
