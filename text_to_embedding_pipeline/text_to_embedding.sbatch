@@ -1,0 +1,106 @@
+#!/bin/bash
+#SBATCH --job-name=text_to_embedding
+#SBATCH --partition=gpu
+#SBATCH --nodes=1
+#SBATCH --gres=gpu:v100-pcie:1
+#SBATCH --cpus-per-task=4
+#SBATCH --mem=32GB
+#SBATCH --time=02:00:00
+#SBATCH --output=text_to_embedding_%j.out
+#SBATCH --error=text_to_embedding_%j.err
+
+# Print job information
+echo "=========================================="
+echo "Job ID: $SLURM_JOB_ID"
+echo "Job Name: $SLURM_JOB_NAME"
+echo "Node: $SLURM_NODELIST"
+echo "Start Time: $(date)"
+echo "=========================================="
+echo ""
+
+# Verify code directory exists
+CODE_PATH="/projects/scdatahub/amol_dmt/image_to_text_runs/MLLM-House-Search"
+if [ ! -d "$CODE_PATH" ]; then
+    echo "ERROR: Code directory not found at $CODE_PATH"
+    exit 1
+fi
+echo "Code directory: $CODE_PATH"
+echo ""
+
+# Load required modules
+echo "Loading modules..."
+module load anaconda3/2024.06
+module load cuda/12.8.0
+echo "Modules loaded successfully"
+echo ""
+
+# Set paths and environment
+export input_path="/projects/scdatahub/amol_dmt/image_to_text_runs/output/house_descriptions.parquet"
+export output_path="/projects/scdatahub/amol_dmt/image_to_text_runs/output/house_embeddings.parquet"
+export model_path="/projects/scdatahub/amol_dmt/model/local_mpnet_model"
+export PYTHONUNBUFFERED=1
+
+# Create output directory and model directory
+mkdir -p "/projects/scdatahub/amol_dmt/image_to_text_runs/output"
+mkdir -p "/projects/scdatahub/amol_dmt/model"
+
+echo "Configuration:"
+echo "  Input: $input_path"
+echo "  Output: $output_path"
+echo "  Model: $model_path"
+echo ""
+
+# Activate conda environment
+echo "Activating conda environment..."
+source activate qwen-env
+if [ $? -ne 0 ]; then
+    echo "ERROR: Failed to activate conda environment 'qwen-env'"
+    exit 1
+fi
+echo "Environment activated: qwen-env"
+echo ""
+
+# Verify GPU availability
+echo "=========================================="
+echo "GPU Verification"
+echo "=========================================="
+python -c "import torch; print(f'PyTorch: {torch.__version__}'); print(f'CUDA available: {torch.cuda.is_available()}'); print(f'CUDA version: {torch.version.cuda}'); print(f'GPU count: {torch.cuda.device_count()}'); print(f'GPU: {torch.cuda.get_device_name(0) if torch.cuda.is_available() else \"N/A\"}')"
+
+# Exit if no GPU detected
+python -c "import torch; import sys; sys.exit(0 if torch.cuda.is_available() else 1)"
+if [ $? -ne 0 ]; then
+    echo ""
+    echo "ERROR: No GPU detected by PyTorch!"
+    echo "Check: GPU allocation, CUDA modules, PyTorch CUDA support"
+    exit 1
+fi
+echo "✓ GPU ready"
+echo ""
+
+# Run the script
+echo "=========================================="
+echo "Running text-to-embedding pipeline"
+echo "=========================================="
+cd "$CODE_PATH/text_to_embedding_pipeline"
+
+python -u main.py \
+    --input "$input_path" \
+    --output "$output_path" \
+    --model-path "$model_path" \
+    --num-workers 4 \
+    --output-format parquet \
+    --resume
+
+if [ $? -eq 0 ]; then
+    echo ""
+    echo "=========================================="
+    echo "SUCCESS: Job completed"
+    echo "End Time: $(date)"
+    echo "=========================================="
+else
+    echo ""
+    echo "=========================================="
+    echo "ERROR: Job failed with exit code $?"
+    echo "=========================================="
+    exit 1
+fi
