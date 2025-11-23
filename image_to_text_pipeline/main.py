@@ -25,13 +25,13 @@ MODEL_ID = "Qwen/Qwen3-VL-8B-Instruct"
 SYSTEM_PROMPT = """Analyze this residential property using 4 images (frontal, kitchen, bedroom, bathroom). Generate a dense, keyword-rich description for semantic search. Include: architectural style, exterior features, interior finishes, flooring, kitchen (cabinets, countertops, appliances), bathroom (vanity, tub/shower, fixtures), lighting, and overall quality. Omit features not visible."""
 
 class HouseDescriptionGenerator:
-    def __init__(self, model_path=None, use_cache=True, worker_id=0):
+    def __init__(self, model_path=None, use_cache=True, worker_id=0, gpu_id=0):
         self.model = None
         self.processor = None
         self.model_path = model_path or "./models/qwen3-vl-8b"
         self.use_cache = use_cache
         self.worker_id = worker_id
-        self.gpu_id = 0  # All workers share GPU 0
+        self.gpu_id = gpu_id
 
     def initialize_model(self):
         """Initialize the model and processor"""
@@ -205,13 +205,13 @@ class HouseDescriptionGenerator:
             return None
 
 
-def worker_process(worker_id, work_queue, result_queue, model_path, base_path, stop_event):
+def worker_process(worker_id, work_queue, result_queue, model_path, base_path, stop_event, gpu_id=0):
     """Worker process that processes houses from the queue"""
     try:
-        print(f"[Worker {worker_id}] Starting worker process", flush=True)
+        print(f"[Worker {worker_id}] Starting worker process on GPU {gpu_id}", flush=True)
 
-        # Initialize generator for this worker (all share GPU 0)
-        generator = HouseDescriptionGenerator(model_path=model_path, worker_id=worker_id)
+        # Initialize generator for this worker with assigned GPU
+        generator = HouseDescriptionGenerator(model_path=model_path, worker_id=worker_id, gpu_id=gpu_id)
         generator.initialize_model()
 
         print(f"[Worker {worker_id}] Ready to process houses", flush=True)
@@ -330,6 +330,24 @@ def main():
 
     print(f"Starting parallel processing job at {datetime.now()}", flush=True)
     print(f"Arguments: {args}", flush=True)
+
+    # Detect available GPUs
+    num_gpus = torch.cuda.device_count() if torch.cuda.is_available() else 0
+    print(f"Detected {num_gpus} GPU(s)", flush=True)
+
+    if num_gpus > 0:
+        for i in range(num_gpus):
+            gpu_name = torch.cuda.get_device_name(i)
+            gpu_memory = torch.cuda.get_device_properties(i).total_memory / 1024**3
+            print(f"  GPU {i}: {gpu_name} ({gpu_memory:.1f} GB)", flush=True)
+
+    # Adjust number of workers based on available GPUs
+    if num_gpus == 0:
+        print("Warning: No GPUs detected. Processing will be slow on CPU.", flush=True)
+        args.num_workers = min(args.num_workers, 1)
+    elif num_gpus >= 2:
+        print(f"Using {num_gpus} GPUs for parallel processing", flush=True)
+
     print(f"Number of workers: {args.num_workers}", flush=True)
 
     # Validate input file
@@ -390,13 +408,16 @@ def main():
     # Start worker processes
     workers = []
     for worker_id in range(args.num_workers):
+        # Assign GPU in round-robin fashion if multiple GPUs available
+        assigned_gpu = worker_id % num_gpus if num_gpus > 0 else 0
+
         p = mp.Process(
             target=worker_process,
-            args=(worker_id, work_queue, result_queue, args.model_path, base_path, stop_event)
+            args=(worker_id, work_queue, result_queue, args.model_path, base_path, stop_event, assigned_gpu)
         )
         p.start()
         workers.append(p)
-        print(f"Started worker {worker_id} (PID: {p.pid})", flush=True)
+        print(f"Started worker {worker_id} on GPU {assigned_gpu} (PID: {p.pid})", flush=True)
 
     # Start result writer thread
     writer_thread = threading.Thread(
