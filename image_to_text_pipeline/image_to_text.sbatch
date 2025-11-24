@@ -4,7 +4,7 @@
 #SBATCH --nodes=1
 #SBATCH --gres=gpu:a100:1
 #SBATCH --cpus-per-task=2
-#SBATCH --mem=16GB
+#SBATCH --mem=GB
 #SBATCH --time=05:00:00
 #SBATCH --output=mllm_job_%j.out
 #SBATCH --error=mllm_job_%j.err
@@ -38,7 +38,7 @@ echo ""
 # Set paths and environment
 export model_path="/projects/scdatahub/amol_dmt/model/2b"
 export json_input_path="/projects/scdatahub/amol_dmt/image_to_text_runs/MLLM-House-Search/house_image_associations.json"
-export output_path="/projects/scdatahub/amol_dmt/image_to_text_runs/output/house_descriptions.parquet"
+export output_path="/projects/scdatahub/amol_dmt/image_to_text_runs/output/house_descriptions_2b.parquet"
 export PYTHONUNBUFFERED=1
 export PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:512
 
