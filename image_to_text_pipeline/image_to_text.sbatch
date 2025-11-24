@@ -29,9 +29,8 @@ echo ""
 
 # Load required modules
 echo "Loading modules..."
-# module purge
-source /shared/centos7/anaconda3/2024.06/etc/profile.d/conda.sh
-module load cuda/12.1.1
+module purge
+module load explorer anaconda3/2024.06 cuda/12.1.1
 echo "Modules loaded successfully"
 echo ""
 
@@ -53,12 +52,12 @@ echo ""
 
 # Activate conda environment
 echo "Activating conda environment..."
-conda activate qwen-env
+conda activate pytorch_env
 if [ $? -ne 0 ]; then
-    echo "ERROR: Failed to activate conda environment 'qwen-env'"
+    echo "ERROR: Failed to activate conda environment 'pytorch_env'"
     exit 1
 fi
-echo "Environment activated: qwen-env"
+echo "Environment activated: pytorch_env"
 echo ""
 
 # Verify GPU availability
