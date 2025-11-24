@@ -30,8 +30,8 @@ echo ""
 # Load required modules
 echo "Loading modules..."
 # module purge
-module load anaconda3/2024.06
-module load cuda/12.8.0
+source /shared/centos7/anaconda3/2024.06/etc/profile.d/conda.sh
+module load cuda/12.1.1
 echo "Modules loaded successfully"
 echo ""
 
@@ -53,7 +53,7 @@ echo ""
 
 # Activate conda environment
 echo "Activating conda environment..."
-source activate qwen-env
+conda activate qwen-env
 if [ $? -ne 0 ]; then
     echo "ERROR: Failed to activate conda environment 'qwen-env'"
     exit 1
