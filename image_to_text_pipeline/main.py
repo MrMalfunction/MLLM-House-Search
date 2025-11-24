@@ -22,7 +22,68 @@ sys.stderr = os.fdopen(sys.stderr.fileno(), 'w', buffering=1)
 
 MODEL_ID = "Qwen/Qwen3-VL-8B-Instruct"
 
-SYSTEM_PROMPT = """Analyze this residential property using 4 images (frontal, kitchen, bedroom, bathroom). Generate a dense, keyword-rich description for semantic search. Include: architectural style, exterior features, interior finishes, flooring, kitchen (cabinets, countertops, appliances), bathroom (vanity, tub/shower, fixtures), lighting, and overall quality. Omit features not visible."""
+SYSTEM_PROMPT = """Below is the full structured property description based solely on the images provided.
+
+1. ARCHITECTURAL & EXTERIOR ANALYSIS
+• Architecture Style: Contemporary suburban two-story home with partial modern-traditional influences.
+• Roof: Asphalt shingle roof with multiple gable forms; appears well-maintained.
+• Siding/Facade: Light-colored siding, likely painted wood or fiber cement, with contrasting trim.
+• Garage/Parking: Three-car attached garage with white roll-up sectional doors.
+• Landscaping/Hardscaping: Mature palm trees, manicured shrubs, landscaped garden beds, artificial turf lawn, concrete driveway, ornamental plants along walkway, hillside surroundings.
+• Windows: Combination of rectangular and arched windows, multi-pane grid designs, standard sliding and fixed windows.
+
+2. INTERIOR FINISHES & MATERIALS
+• Flooring:
+    •    Kitchen: Light ceramic tile flooring.
+    •    Bedroom & Bathroom (vanity area): Wall-to-wall carpet.
+• Lighting:
+    •    Kitchen features recessed ceiling lights and a large crystal-style chandelier above dining area.
+    •    Bedroom and bathroom contain ceiling fans with integrated light fixtures.
+    •    Ample natural light from windows and sliding doors.
+• Ceilings:
+    •    Standard flat ceilings throughout.
+    •    Kitchen and living areas appear to have slightly elevated ceiling height.
+
+3. KITCHEN DETAILS
+• Cabinetry: White raised-panel cabinets with crown molding and chrome hardware. Upper cabinets extend to ceiling with decorative items placed above.
+• Countertops: Light solid-surface or laminate countertops in a neutral color.
+• Appliances:
+    •    Stainless steel top-freezer refrigerator.
+    •    White electric stove/oven range.
+    •    White built-in microwave.
+    •    No visible dishwasher (not shown).
+• Layout/Features:
+    •    L-shaped kitchen configuration.
+    •    No island; integrated eat-in dining area adjacent.
+    •    Decorative plants above cabinetry.
+    •    Large sliding glass door to outdoor area.
+    •    Colorful tablecloth on dining table with wooden chairs.
+
+4. BATHROOM DETAILS
+• Vanity: Extra-long wooden vanity with natural-oak cabinetry, double sinks, white tile countertop, wall-to-wall framed mirror, overhead fluorescent/modeled light box.
+• Tub/Shower: Large built-in soaking tub with white tile surround; separate glass-enclosed shower with tile walls and built-in bench.
+• Fixtures: Primarily chrome faucet and hardware finishes.
+• Additional: Private toilet room, visible laundry appliances adjacent.
+
+5. BEDROOM & LIVING FEATURES
+• Key Features:
+    •    Large bedroom with carved wood bedframe.
+    •    Integrated double-sided or corner fireplace with tile hearth.
+    •    Built-in shelf above fireplace with decorative greenery.
+    •    Access to adjacent sitting area or secondary space beyond bedroom.
+• Window Treatments:
+    •    Bedroom includes heavy drapes with valance.
+    •    Bathroom features blinds over tub window.
+    •    Kitchen sliding doors have vertical blinds.
+
+6. OVERALL CONDITION & VIBE
+• Era/Decade Estimate:
+Likely late 1980s–1990s construction with partial updates; interior finishes (tile counters, oak cabinetry, fluorescent bath lighting, carpeted bathroom) strongly suggest mid-1990s design.
+• Atmosphere:
+Bright, spacious, well-maintained but somewhat dated in finishes. Comfortable, traditional, warm with personalized décor elements. Clean and organized.
+
+7. SEMANTIC KEYWORDS SUMMARY
+Contemporary two-story home, asphalt shingle roof, three-car garage, palm trees, landscaped yard, artificial turf, white raised-panel kitchen cabinets, stainless steel refrigerator, white electric stove, tile backsplash area, tile flooring kitchen, carpeted bedroom, ceiling fans, chandelier dining area, sliding glass doors, large soaking tub, separate glass shower, double-sink vanity, oak bathroom cabinets, corner fireplace, heavy drapes, multi-pane windows, vaulted-feel kitchen ceiling, 1990s-style interior finishes, suburban hillside property, manicured landscaping."""
 
 class HouseDescriptionGenerator:
     def __init__(self, model_path=None, use_cache=True, worker_id=0, gpu_id=0):
@@ -177,7 +238,7 @@ class HouseDescriptionGenerator:
                     raise FileNotFoundError(f"Image not found: {img_path}")
 
             # Generate description
-            description, gen_time = self.generate_description(image_paths)
+            description, gen_time = self.generate_description(image_paths, max_tokens=750)
 
             # Build result
             result = {
