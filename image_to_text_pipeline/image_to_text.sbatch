@@ -52,6 +52,7 @@ echo ""
 
 # Activate conda environment
 echo "Activating conda environment..."
+source /shared/centos7/anaconda3/2024.06/etc/profile.d/conda.sh
 conda activate pytorch_env
 if [ $? -ne 0 ]; then
     echo "ERROR: Failed to activate conda environment 'pytorch_env'"
@@ -88,6 +89,7 @@ python -u main.py \
     --output "$output_path" \
     --model-path "$model_path" \
     --resume
+    --num-workers 4
 
 if [ $? -eq 0 ]; then
     echo ""
