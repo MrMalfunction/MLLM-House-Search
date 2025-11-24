@@ -98,13 +98,14 @@ class HouseDescriptionGenerator:
         """Initialize the model and processor"""
         print(f"[Worker {self.worker_id}][{datetime.now().strftime('%H:%M:%S')}] Initializing model...", flush=True)
 
-        # Clear GPU memory
+        # Set device 0 (which maps to the physical GPU via CUDA_VISIBLE_DEVICES)
         if torch.cuda.is_available():
-            torch.cuda.set_device(self.gpu_id)
+            torch.cuda.set_device(0)
             torch.cuda.empty_cache()
             gc.collect()
-            device_name = torch.cuda.get_device_name(self.gpu_id)
-            print(f"[Worker {self.worker_id}] GPU detected: {device_name} (GPU {self.gpu_id})", flush=True)
+            device_name = torch.cuda.get_device_name(0)
+            print(f"[Worker {self.worker_id}] GPU detected: {device_name} (using cuda:0 via CUDA_VISIBLE_DEVICES)", flush=True)
+            print(f"[Worker {self.worker_id}] Current CUDA device: {torch.cuda.current_device()}", flush=True)
         else:
             print(f"[Worker {self.worker_id}] No GPU detected, using CPU", flush=True)
 
@@ -130,10 +131,13 @@ class HouseDescriptionGenerator:
             trust_remote_code=True
         )
 
+        # Load model to GPU 0 (which is the physical GPU set by CUDA_VISIBLE_DEVICES)
+        print(f"[Worker {self.worker_id}] Loading model to cuda:0 (physical GPU via CUDA_VISIBLE_DEVICES)", flush=True)
+
         self.model = AutoModelForVision2Seq.from_pretrained(
             self.model_path,
             torch_dtype=dtype,
-            device_map={"": self.gpu_id},  # All workers share GPU 0
+            device_map={"": 0},  # Device 0 in the visible devices
             trust_remote_code=True,
             low_cpu_mem_usage=True,
             attn_implementation="eager"
@@ -146,7 +150,7 @@ class HouseDescriptionGenerator:
         print(f"[Worker {self.worker_id}] Model loaded successfully on {next(self.model.parameters()).device}", flush=True)
 
         if torch.cuda.is_available():
-            print(f"[Worker {self.worker_id}] GPU Memory: {torch.cuda.memory_allocated(self.gpu_id) / 1024**3:.2f} GB", flush=True)
+            print(f"[Worker {self.worker_id}] GPU Memory: {torch.cuda.memory_allocated(0) / 1024**3:.2f} GB", flush=True)
 
     def load_image(self, path):
         """Load and convert image to RGB"""
@@ -183,13 +187,15 @@ class HouseDescriptionGenerator:
             messages, tokenize=False, add_generation_prompt=True
         )
         image_inputs, video_inputs = process_vision_info(messages)
+        # Ensure inputs are on the correct GPU device (cuda:0 due to CUDA_VISIBLE_DEVICES)
+        device = "cuda:0" if torch.cuda.is_available() else "cpu"
         inputs = self.processor(
             text=[text],
             images=image_inputs,
             videos=video_inputs,
             padding=True,
             return_tensors="pt",
-        ).to(self.model.device)
+        ).to(device)
 
         # Generate
         start_time = time.time()
@@ -269,10 +275,14 @@ class HouseDescriptionGenerator:
 def worker_process(worker_id, work_queue, result_queue, model_path, base_path, stop_event, gpu_id=0):
     """Worker process that processes houses from the queue"""
     try:
+        # Set CUDA_VISIBLE_DEVICES to isolate this worker to its assigned GPU
+        os.environ['CUDA_VISIBLE_DEVICES'] = str(gpu_id)
         print(f"[Worker {worker_id}] Starting worker process on GPU {gpu_id}", flush=True)
+        print(f"[Worker {worker_id}] CUDA_VISIBLE_DEVICES set to: {os.environ.get('CUDA_VISIBLE_DEVICES')}", flush=True)
 
-        # Initialize generator for this worker with assigned GPU
-        generator = HouseDescriptionGenerator(model_path=model_path, worker_id=worker_id, gpu_id=gpu_id)
+        # Initialize generator for this worker - now it will use device 0 which maps to the physical GPU
+        # specified by CUDA_VISIBLE_DEVICES
+        generator = HouseDescriptionGenerator(model_path=model_path, worker_id=worker_id, gpu_id=0)
         generator.initialize_model()
 
         print(f"[Worker {worker_id}] Ready to process houses", flush=True)
