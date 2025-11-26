@@ -88,8 +88,8 @@ python -u main.py \
     --input "$json_input_path" \
     --output "$output_path" \
     --model-path "$model_path" \
-    --resume
-    --num-workers 4
+    --resume \
+    --num-workers 6
 
 if [ $? -eq 0 ]; then
     echo ""

@@ -244,7 +244,7 @@ class HouseDescriptionGenerator:
                     raise FileNotFoundError(f"Image not found: {img_path}")
 
             # Generate description
-            description, gen_time = self.generate_description(image_paths, max_tokens=750)
+            description, gen_time = self.generate_description(image_paths, max_tokens=2000)
 
             # Build result
             result = {
