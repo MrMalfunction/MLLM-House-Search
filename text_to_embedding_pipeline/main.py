@@ -203,13 +203,39 @@ def parse_args():
     return parser.parse_args()
 
 
+
 if __name__ == "__main__":
     args = parse_args()
-    run_pipeline(
-        input_csv=args.input_csv,
-        output_dir=args.output_dir,
-        model_name=args.model_name,
-        text_column=args.text_column,
-    )
+    ensure_nltk_resources()
+    # Run pipeline and get processed data
+    df = load_data(args.input_csv)
+    df = add_text_for_embeddings(df)
+    df = add_processed_text(df)
+    model = load_embedding_model(args.model_name)
+    texts_to_embed = df[args.text_column]
+    embeddings = compute_embeddings(texts_to_embed, model=model, batch_size=64)
+    save_outputs(df, embeddings, args.output_dir)
+
+    # --- User query and semantic retrieval ---
+    print("\n--- Semantic House Search ---")
+    user_query = input("Enter your house search query: ")
+    processed_query = preprocess_text(user_query)
+    query_embedding = model.encode([processed_query])[0]
+
+    # Compute cosine similarity
+    def cosine_similarity(a, b):
+        a = np.asarray(a)
+        b = np.asarray(b)
+        return np.dot(a, b) / (np.linalg.norm(a) * np.linalg.norm(b))
+
+    similarities = np.array([cosine_similarity(query_embedding, emb) for emb in embeddings])
+    top_indices = np.argsort(similarities)[::-1][:10]
+
+    print("\nTop 10 matching houses:")
+    for rank, idx in enumerate(top_indices, 1):
+        house = df.iloc[idx]
+        print(f"#{rank}: House ID {house['house_id']} | Score: {similarities[idx]:.4f}")
+        print(f"   {house['description']}")
+        print()
 
 
