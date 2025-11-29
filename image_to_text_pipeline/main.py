@@ -22,68 +22,36 @@ sys.stderr = os.fdopen(sys.stderr.fileno(), 'w', buffering=1)
 
 MODEL_ID = "Qwen/Qwen3-VL-8B-Instruct"
 
-SYSTEM_PROMPT = """Below is the full structured property description based solely on the images provided.
-
+SYSTEM_PROMPT = """System Instruction: You are an expert Real Estate Appraiser and Architectural Analyst. You have been provided with a set of images representing a single residential property (typically including an Exterior facade, Kitchen, Bedroom, and Bathroom).
+Your goal is to generate a dense, keyword-rich, and comprehensive description of this property for a database. This text will be converted into vector embeddings for a semantic search engine, so specificity is critical.
+Please analyze the images and output the description in the following structured format. If a feature is not visible, do not invent it; simply omit it.
 1. ARCHITECTURAL & EXTERIOR ANALYSIS
-• Architecture Style: Contemporary suburban two-story home with partial modern-traditional influences.
-• Roof: Asphalt shingle roof with multiple gable forms; appears well-maintained.
-• Siding/Facade: Light-colored siding, likely painted wood or fiber cement, with contrasting trim.
-• Garage/Parking: Three-car attached garage with white roll-up sectional doors.
-• Landscaping/Hardscaping: Mature palm trees, manicured shrubs, landscaped garden beds, artificial turf lawn, concrete driveway, ornamental plants along walkway, hillside surroundings.
-• Windows: Combination of rectangular and arched windows, multi-pane grid designs, standard sliding and fixed windows.
-
+  • Architecture Style: (e.g., Ranch, Colonial, Contemporary, Spanish Revival, Craftsman)
+  • Roof: (Material, shape, condition - e.g., Clay tile, asphalt shingle, gable, flat)
+  • Siding/Facade: (Material and color - e.g., Stucco, vinyl, brick, stone veneer, wood)
+  • Garage/Parking: (Capacity and door style - e.g., 2-car attached, 3-car, roll-up doors)
+  • Landscaping/Hardscaping: (Vegetation type, driveway material, walkways - e.g., Palm trees, manicured lawn, concrete driveway, xeriscape)
+  • Windows: (Type and shape - e.g., Arched, double-hung, bay windows, floor-to-ceiling)
 2. INTERIOR FINISHES & MATERIALS
-• Flooring:
-    •    Kitchen: Light ceramic tile flooring.
-    •    Bedroom & Bathroom (vanity area): Wall-to-wall carpet.
-• Lighting:
-    •    Kitchen features recessed ceiling lights and a large crystal-style chandelier above dining area.
-    •    Bedroom and bathroom contain ceiling fans with integrated light fixtures.
-    •    Ample natural light from windows and sliding doors.
-• Ceilings:
-    •    Standard flat ceilings throughout.
-    •    Kitchen and living areas appear to have slightly elevated ceiling height.
-
+  • Flooring: Specify materials for each visible room (e.g., Wall-to-wall carpet in bedroom, ceramic tile in kitchen, hardwood in living area).
+  • Lighting: (e.g., Recessed lighting, chandeliers, ceiling fans, track lighting, natural light levels).
+  • Ceilings: (e.g., Vaulted, popcorn, tray, standard height).
 3. KITCHEN DETAILS
-• Cabinetry: White raised-panel cabinets with crown molding and chrome hardware. Upper cabinets extend to ceiling with decorative items placed above.
-• Countertops: Light solid-surface or laminate countertops in a neutral color.
-• Appliances:
-    •    Stainless steel top-freezer refrigerator.
-    •    White electric stove/oven range.
-    •    White built-in microwave.
-    •    No visible dishwasher (not shown).
-• Layout/Features:
-    •    L-shaped kitchen configuration.
-    •    No island; integrated eat-in dining area adjacent.
-    •    Decorative plants above cabinetry.
-    •    Large sliding glass door to outdoor area.
-    •    Colorful tablecloth on dining table with wooden chairs.
-
+  • Cabinetry: (Color, style, finish - e.g., White raised-panel, oak wood, shaker, glossy modern).
+  • Countertops: (Material approximation - e.g., Granite, quartz, laminate, tile).
+  • Appliances: (Finish and type - e.g., Stainless steel refrigerator, white electric stove, dishwasher presence).
+  • Layout/Features: (e.g., Kitchen island, peninsula, eat-in dining area, backsplash style).
 4. BATHROOM DETAILS
-• Vanity: Extra-long wooden vanity with natural-oak cabinetry, double sinks, white tile countertop, wall-to-wall framed mirror, overhead fluorescent/modeled light box.
-• Tub/Shower: Large built-in soaking tub with white tile surround; separate glass-enclosed shower with tile walls and built-in bench.
-• Fixtures: Primarily chrome faucet and hardware finishes.
-• Additional: Private toilet room, visible laundry appliances adjacent.
-
+  • Vanity: (Single or double sink, counter material, cabinet style).
+  • Tub/Shower: (e.g., Freestanding tub, glass-enclosed shower, shower-tub combo, jacuzzi).
+  • Fixtures: (Metal finish - e.g., Brushed nickel, chrome, brass).
 5. BEDROOM & LIVING FEATURES
-• Key Features:
-    •    Large bedroom with carved wood bedframe.
-    •    Integrated double-sided or corner fireplace with tile hearth.
-    •    Built-in shelf above fireplace with decorative greenery.
-    •    Access to adjacent sitting area or secondary space beyond bedroom.
-• Window Treatments:
-    •    Bedroom includes heavy drapes with valance.
-    •    Bathroom features blinds over tub window.
-    •    Kitchen sliding doors have vertical blinds.
-
+  • Key Features: (e.g., Fireplace (brick/stone), sliding glass doors, built-in shelving, closet types).
+  • Window Treatments: (e.g., Heavy drapes, blinds, plantation shutters).
 6. OVERALL CONDITION & VIBE
-• Era/Decade Estimate:
-Likely late 1980s–1990s construction with partial updates; interior finishes (tile counters, oak cabinetry, fluorescent bath lighting, carpeted bathroom) strongly suggest mid-1990s design.
-• Atmosphere:
-Bright, spacious, well-maintained but somewhat dated in finishes. Comfortable, traditional, warm with personalized décor elements. Clean and organized.
-
-7. SEMANTIC KEYWORDS SUMMARY
-Contemporary two-story home, asphalt shingle roof, three-car garage, palm trees, landscaped yard, artificial turf, white raised-panel kitchen cabinets, stainless steel refrigerator, white electric stove, tile backsplash area, tile flooring kitchen, carpeted bedroom, ceiling fans, chandelier dining area, sliding glass doors, large soaking tub, separate glass shower, double-sink vanity, oak bathroom cabinets, corner fireplace, heavy drapes, multi-pane windows, vaulted-feel kitchen ceiling, 1990s-style interior finishes, suburban hillside property, manicured landscaping."""
+  • Era/Decade Estimate: Based on decor and fixtures (e.g., 1990s renovation, mid-century original, modern new build).
+  • Atmosphere: (e.g., Open concept, cluttered, spacious, cozy, dated, luxurious).
+"""
 
 class HouseDescriptionGenerator:
     def __init__(self, model_path=None, use_cache=True, worker_id=0, gpu_id=0):
