@@ -1,23 +1,24 @@
 # Core dependencies
-numpy>=1.24.0,<2.0.0
-pandas>=2.0.0,<3.0.0
+
+numpy>=1.24.0
+pandas>=2.0.0
 
 # Natural Language Processing
 nltk>=3.8.0
 
 # Text Embedding
-sentence-transformers>=2.2.0
+sentence-transformers>=5.1.2
 
 # Deep Learning Framework (CPU version)
-torch>=2.0.0,<2.1.0
-torchvision>=0.15.0,<0.16.0
+torch>=2.1.0
+torchvision>=0.15.0
 
 # Image Processing
 Pillow>=10.0.0
 
-# Vision-Language Model - flexible versions
-transformers>=4.35.0,<5.0.0
-huggingface-hub>=0.16.4,<0.18.0
+# Vision-Language Model
+transformers>=4.57.3
+huggingface-hub>=0.36.0
 accelerate>=0.24.0
 qwen-vl-utils>=0.0.2
 

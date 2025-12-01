@@ -9,8 +9,10 @@ import pandas as pd
 import nltk
 from nltk.corpus import stopwords
 from nltk.stem import PorterStemmer
-
+from pinecone import Pinecone, ServerlessSpec
 from sentence_transformers import SentenceTransformer
+import json
+
 
 
 # ---------- Text preprocessing helpers ----------
@@ -35,6 +37,9 @@ PATTERN = r"[^a-zA-Z0-9]+"
 
 STOP_WORDS = None
 STEMMER = PorterStemmer()
+PINECONE_API_KEY = "pcsk_7E8HTs_HiEafPqENsAfB5P228ALWecbAELitArRiKkoD1TtxZPvhjAxDL9q2g9U6ReyPWM"
+# Pinecone has a 2MB request size limit; stay slightly under it
+MAX_REQUEST_BYTES = 1_900_000  
 
 #  Check if NLTK stopwords are downloaded; if not, download them
 def ensure_nltk_resources():
@@ -156,6 +161,97 @@ def save_outputs(
 
     df.to_csv(csv_path, index=False)
     np.save(npy_path, embeddings)
+
+def pinecone_index_get(index_name: str, dimension: int, metric: str):
+    api_key_pinecone = PINECONE_API_KEY
+
+    if not api_key_pinecone:
+        raise ValueError("Pinecone API key is not set. Please set the PINECONE_API_KEY variablebefore using Pinecone services.")
+    pinecone = Pinecone(api_key=api_key_pinecone)
+    if index_name not in [idx['name'] for idx in pinecone.list_indexes()]:
+           pinecone.create_index(name=index_name, dimension=dimension, metric=metric, spec=ServerlessSpec(cloud="aws", region="us-east-1"))
+    index = pinecone.Index(index_name)      
+    return index
+
+def update_to_pinecone(index, df: pd.DataFrame, embeddings: np.ndarray, column_id: str="house_id", batch_size: int = 100):
+
+    if len(df) != embeddings.shape[0]:
+        raise ValueError("Number of rows in df and embeddings do not match")
+
+    current_batch = []
+
+    def flush_batch():
+        nonlocal current_batch
+        if not current_batch:
+            return
+        index.upsert(vectors=current_batch)
+        current_batch = []
+
+    for i, (_, row) in enumerate(df.iterrows()):
+        vector_id = str(row[column_id])
+        values = embeddings[i].tolist()
+
+        metadata = {
+            "house_id": str(row["house_id"]),
+            "bedrooms": int(row["bedrooms"]),
+            "bathrooms": float(row["bathrooms"]),
+            "area": float(row["area"]),
+            "zipcode": str(row["zipcode"]),
+            "price": float(row["price"]),
+            "description": row.get("description", "") or "",
+        }
+
+        vec = {
+            "id": vector_id,
+            "values": values,
+            "metadata": metadata,
+        }
+
+        current_batch.append(vec)
+
+        # 1) limit #vectors per batch
+        too_many_vectors = len(current_batch) >= batch_size
+
+        # 2) keep JSON payload under ~1.9MB
+        approx_bytes = len(json.dumps({"vectors": current_batch}).encode("utf-8"))
+        too_large_bytes = approx_bytes > MAX_REQUEST_BYTES
+
+        if too_many_vectors or too_large_bytes:
+            # remove last if size blew up, flush previous batch, then start new with this vec
+            if too_large_bytes and len(current_batch) > 1:
+                last_vec = current_batch.pop()
+                index.upsert(vectors=current_batch)
+                current_batch = [last_vec]
+            else:
+                flush_batch()
+
+    # flush any remaining vectors
+    flush_batch()
+        
+def pinecone_house_search(index, model, query: str, top_k: int = 10):
+    # Preprocess and embed the query the same way as training text
+    processed_query = preprocess_text(query)
+    query_embedding = model.encode([processed_query])[0].tolist()
+
+    results = index.query(
+        vector=query_embedding,
+        top_k=top_k,
+        include_metadata=True,
+    )
+
+    print(f"\nTop {top_k} matching houses (Pinecone):")
+    for rank, match in enumerate(results["matches"], 1):
+        md = match["metadata"]
+        score = match["score"]
+        print(f"#{rank}: House ID {md['house_id']} | Score: {score:.4f}")
+        print(
+            f"   {md['bedrooms']} bd, {md['bathrooms']} ba, "
+            f"{md['area']} sqft, zipcode {md['zipcode']}, price ${md['price']}"
+        )
+        print(f"   {md.get('description', '')}")
+        print()
+
+
 # ---------- Orchestration / CLI ----------
 # Main pipeline function
 def run_pipeline(
@@ -200,6 +296,16 @@ def parse_args():
         default="text_for_embeddings",
         help="Which column to embed (text_for_embeddings or processed_textembeddings)",
     )
+    parser.add_argument(
+        "--pinecone_index",
+        default=None,
+        help="If provided, update embeddings into this Pinecone index",
+    )
+    parser.add_argument(
+        "--pinecone_metric",
+        default="cosine",
+        help="Pinecone similarity metric (cosine, dotproduct, or euclidean)",
+    )
     return parser.parse_args()
 
 
@@ -215,6 +321,17 @@ if __name__ == "__main__":
     texts_to_embed = df[args.text_column]
     embeddings = compute_embeddings(texts_to_embed, model=model, batch_size=64)
     save_outputs(df, embeddings, args.output_dir)
+    index = None  # Ensure index is always defined
+
+    if args.pinecone_index:
+        print(f"\nUpserting {len(df)} vectors into Pinecone index '{args.pinecone_index}'...")
+        index = pinecone_index_get(
+            index_name=args.pinecone_index,
+            dimension=embeddings.shape[1],
+            metric=args.pinecone_metric,
+        )
+        update_to_pinecone(index, df, embeddings, batch_size=100)
+        print("Upsert completed.")
 
     # --- User query and semantic retrieval ---
     print("\n--- Semantic House Search ---")
@@ -222,20 +339,26 @@ if __name__ == "__main__":
     processed_query = preprocess_text(user_query)
     query_embedding = model.encode([processed_query])[0]
 
-    # Compute cosine similarity
-    def cosine_similarity(a, b):
-        a = np.asarray(a)
-        b = np.asarray(b)
-        return np.dot(a, b) / (np.linalg.norm(a) * np.linalg.norm(b))
+    if index is not None:
+        pinecone_house_search(index, model, user_query, top_k=10)
+    else:
+        # Fallback: local cosine similarity search
+        processed_query = preprocess_text(user_query)
+        query_embedding = model.encode([processed_query])[0]
 
-    similarities = np.array([cosine_similarity(query_embedding, emb) for emb in embeddings])
-    top_indices = np.argsort(similarities)[::-1][:10]
+        def cosine_similarity(a, b):
+            a = np.asarray(a)
+            b = np.asarray(b)
+            return np.dot(a, b) / (np.linalg.norm(a) * np.linalg.norm(b))
 
-    print("\nTop 10 matching houses:")
-    for rank, idx in enumerate(top_indices, 1):
-        house = df.iloc[idx]
-        print(f"#{rank}: House ID {house['house_id']} | Score: {similarities[idx]:.4f}")
-        print(f"   {house['description']}")
-        print()
+        similarities = np.array([cosine_similarity(query_embedding, emb) for emb in embeddings])
+        top_indices = np.argsort(similarities)[::-1][:10]
+
+        print("\nTop 10 matching houses (local search):")
+        for rank, idx in enumerate(top_indices, 1):
+            house = df.iloc[idx]
+            print(f"#{rank}: House ID {house['house_id']} | Score: {similarities[idx]:.4f}")
+            print(f"   {house['description']}")
+            print()
 
 
