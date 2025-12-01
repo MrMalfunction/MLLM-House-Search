@@ -37,7 +37,7 @@ PATTERN = r"[^a-zA-Z0-9]+"
 
 STOP_WORDS = None
 STEMMER = PorterStemmer()
-PINECONE_API_KEY = "pcsk_7E8HTs_HiEafPqENsAfB5P228ALWecbAELitArRiKkoD1TtxZPvhjAxDL9q2g9U6ReyPWM"
+PINECONE_API_KEY = "PINECONE_API_KEY"  # Replace with your actual Pinecone API key
 # Pinecone has a 2MB request size limit; stay slightly under it
 MAX_REQUEST_BYTES = 1_900_000  
 
