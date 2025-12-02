@@ -40,6 +40,9 @@ dependencies = [
 
     # Progress bars
     "tqdm>=4.66.0",
+
+    # Web Interface
+    "streamlit>=1.28.0",
 ]
 
 [project.optional-dependencies]
