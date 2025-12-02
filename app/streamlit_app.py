@@ -99,7 +99,13 @@ def connect_to_pinecone(index_name: str):
 @st.cache_data
 def load_house_data():
     """Load house metadata and image associations from JSON file"""
+    # Try parent data directory first (for local development)
     json_path = Path(__file__).parent.parent / "data" / "house_image_associations.json"
+
+    # If not found, try app/data directory (for deployment)
+    if not json_path.exists():
+        json_path = Path(__file__).parent / "data" / "house_image_associations.json"
+
     try:
         with open(json_path, 'r') as f:
             data = json.load(f)
@@ -188,7 +194,13 @@ def display_house_card(house_info, rank, score, pinecone_metadata=None):
         for idx, (img_type, label) in enumerate(zip(image_types, image_labels)):
             img_path = images.get(img_type, '')
             if img_path:
+                # Try parent data directory first (for local development)
                 full_path = Path(__file__).parent.parent / "data" / img_path
+
+                # If not found, try app/data directory (for deployment)
+                if not full_path.exists():
+                    full_path = Path(__file__).parent / "data" / img_path
+
                 if full_path.exists():
                     try:
                         img = Image.open(full_path)
