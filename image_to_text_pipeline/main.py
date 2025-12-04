@@ -8,6 +8,7 @@ import pandas as pd
 import torch
 import gc
 import time
+import random
 from PIL import Image
 from transformers import AutoProcessor, AutoModelForVision2Seq
 from qwen_vl_utils import process_vision_info
@@ -22,36 +23,14 @@ sys.stderr = os.fdopen(sys.stderr.fileno(), 'w', buffering=1)
 
 MODEL_ID = "Qwen/Qwen3-VL-8B-Instruct"
 
-SYSTEM_PROMPT = """System Instruction: You are an expert Real Estate Appraiser and Architectural Analyst. You have been provided with a set of images representing a single residential property (typically including an Exterior facade, Kitchen, Bedroom, and Bathroom).
-Your goal is to generate a dense, keyword-rich, and comprehensive description of this property for a database. This text will be converted into vector embeddings for a semantic search engine, so specificity is critical.
-Please analyze the images and output the description in the following structured format. If a feature is not visible, do not invent it; simply omit it.
-1. ARCHITECTURAL & EXTERIOR ANALYSIS
-  • Architecture Style: (e.g., Ranch, Colonial, Contemporary, Spanish Revival, Craftsman)
-  • Roof: (Material, shape, condition - e.g., Clay tile, asphalt shingle, gable, flat)
-  • Siding/Facade: (Material and color - e.g., Stucco, vinyl, brick, stone veneer, wood)
-  • Garage/Parking: (Capacity and door style - e.g., 2-car attached, 3-car, roll-up doors)
-  • Landscaping/Hardscaping: (Vegetation type, driveway material, walkways - e.g., Palm trees, manicured lawn, concrete driveway, xeriscape)
-  • Windows: (Type and shape - e.g., Arched, double-hung, bay windows, floor-to-ceiling)
-2. INTERIOR FINISHES & MATERIALS
-  • Flooring: Specify materials for each visible room (e.g., Wall-to-wall carpet in bedroom, ceramic tile in kitchen, hardwood in living area).
-  • Lighting: (e.g., Recessed lighting, chandeliers, ceiling fans, track lighting, natural light levels).
-  • Ceilings: (e.g., Vaulted, popcorn, tray, standard height).
-3. KITCHEN DETAILS
-  • Cabinetry: (Color, style, finish - e.g., White raised-panel, oak wood, shaker, glossy modern).
-  • Countertops: (Material approximation - e.g., Granite, quartz, laminate, tile).
-  • Appliances: (Finish and type - e.g., Stainless steel refrigerator, white electric stove, dishwasher presence).
-  • Layout/Features: (e.g., Kitchen island, peninsula, eat-in dining area, backsplash style).
-4. BATHROOM DETAILS
-  • Vanity: (Single or double sink, counter material, cabinet style).
-  • Tub/Shower: (e.g., Freestanding tub, glass-enclosed shower, shower-tub combo, jacuzzi).
-  • Fixtures: (Metal finish - e.g., Brushed nickel, chrome, brass).
-5. BEDROOM & LIVING FEATURES
-  • Key Features: (e.g., Fireplace (brick/stone), sliding glass doors, built-in shelving, closet types).
-  • Window Treatments: (e.g., Heavy drapes, blinds, plantation shutters).
-6. OVERALL CONDITION & VIBE
-  • Era/Decade Estimate: Based on decor and fixtures (e.g., 1990s renovation, mid-century original, modern new build).
-  • Atmosphere: (e.g., Open concept, cluttered, spacious, cozy, dated, luxurious).
-"""
+# Load prompt from file
+def load_prompt():
+    """Load the prompt from prompt.txt file"""
+    prompt_path = os.path.join(os.path.dirname(__file__), "prompt.txt")
+    with open(prompt_path, 'r') as f:
+        return f.read().strip()
+
+SYSTEM_PROMPT = load_prompt()
 
 class HouseDescriptionGenerator:
     def __init__(self, model_path=None, use_cache=True, worker_id=0, gpu_id=0):
@@ -129,8 +108,8 @@ class HouseDescriptionGenerator:
             img = img.convert("RGB")
         return img
 
-    def generate_description(self, image_paths, max_tokens=200):
-        """Generate description from multiple images"""
+    def generate_description(self, image_paths, metadata, max_tokens=200):
+        """Generate description from multiple images with metadata"""
         if self.model is None or self.processor is None:
             raise RuntimeError("Model not initialized. Call initialize_model() first.")
 
@@ -142,11 +121,22 @@ class HouseDescriptionGenerator:
             {"role": "system", "content": [{"type": "text", "text": SYSTEM_PROMPT}]}
         ]
 
-        # Add images and query
+        # Add images and query with metadata
         content = []
         for img in images:
             content.append({"type": "image", "image": img})
-        content.append({"type": "text", "text": "Analyze the property using the provided guidelines."})
+
+        # Create metadata string (without house_id)
+        metadata_str = f"""Property Metadata:
+- Bedrooms: {metadata.get('bedrooms', 'N/A')}
+- Bathrooms: {metadata.get('bathrooms', 'N/A')}
+- Area: {metadata.get('area', 'N/A')}
+- Zipcode: {metadata.get('zipcode', 'N/A')}
+- Price: {metadata.get('price', 'N/A')}
+
+Analyze the property images and provide the description."""
+
+        content.append({"type": "text", "text": metadata_str})
 
         messages.append({"role": "user", "content": content})
 
@@ -211,8 +201,17 @@ class HouseDescriptionGenerator:
                 if not os.path.exists(img_path):
                     raise FileNotFoundError(f"Image not found: {img_path}")
 
+            # Prepare metadata (without house_id)
+            metadata = {
+                "bedrooms": house_data["metadata"].get("bedrooms"),
+                "bathrooms": house_data["metadata"].get("bathrooms"),
+                "area": house_data["metadata"].get("area"),
+                "zipcode": house_data["metadata"].get("zipcode"),
+                "price": house_data["metadata"].get("price")
+            }
+
             # Generate description
-            description, gen_time = self.generate_description(image_paths, max_tokens=2000)
+            description, gen_time = self.generate_description(image_paths, metadata, max_tokens=2000)
 
             # Build result
             result = {
@@ -330,6 +329,89 @@ def result_writer_thread(result_queue, output_file, stop_event):
     return successful, failed
 
 
+def test_single_house(input_file, model_path, house_id=None):
+    """Test mode: Process a single random house and print the output"""
+    print(f"\n{'='*60}", flush=True)
+    print("TEST MODE - Processing Single House", flush=True)
+    print(f"{'='*60}\n", flush=True)
+
+    # Load house data
+    print(f"Loading house data from {input_file}...", flush=True)
+    with open(input_file, 'r') as f:
+        houses_data = json.load(f)
+    print(f"Found {len(houses_data)} houses", flush=True)
+
+    # Select house to test
+    if house_id:
+        house_data = next((h for h in houses_data if h['house_id'] == house_id), None)
+        if not house_data:
+            print(f"Error: House ID {house_id} not found", flush=True)
+            sys.exit(1)
+        print(f"Testing specified house ID: {house_id}", flush=True)
+    else:
+        house_data = random.choice(houses_data)
+        print(f"Randomly selected house ID: {house_data['house_id']}", flush=True)
+
+    # Display house info
+    print(f"\nHouse Metadata:", flush=True)
+    print(f"  - Bedrooms: {house_data['metadata'].get('bedrooms')}", flush=True)
+    print(f"  - Bathrooms: {house_data['metadata'].get('bathrooms')}", flush=True)
+    print(f"  - Area: {house_data['metadata'].get('area')}", flush=True)
+    print(f"  - Zipcode: {house_data['metadata'].get('zipcode')}", flush=True)
+    print(f"  - Price: {house_data['metadata'].get('price')}", flush=True)
+
+    print(f"\nImages:", flush=True)
+    print(f"  - Frontal: {house_data['images']['frontal']}", flush=True)
+    print(f"  - Kitchen: {house_data['images']['kitchen']}", flush=True)
+    print(f"  - Bedroom: {house_data['images']['bedroom']}", flush=True)
+    print(f"  - Bathroom: {house_data['images']['bathroom']}", flush=True)
+
+    # Initialize generator
+    base_path = os.path.dirname(input_file) if os.path.dirname(input_file) else "."
+
+    print(f"\nInitializing model...", flush=True)
+    generator = HouseDescriptionGenerator(model_path=model_path, worker_id=0, gpu_id=0)
+    generator.initialize_model()
+
+    # Process the house
+    print(f"\n{'='*60}", flush=True)
+    print("Processing house...", flush=True)
+    print(f"{'='*60}\n", flush=True)
+
+    start_time = time.time()
+    result = generator.process_house(house_data, base_path)
+    processing_time = time.time() - start_time
+
+    if result:
+        print(f"\n{'='*60}", flush=True)
+        print("RESULT", flush=True)
+        print(f"{'='*60}\n", flush=True)
+
+        print(f"House ID: {result['house_id']}", flush=True)
+        print(f"Processing Time: {processing_time:.2f} seconds", flush=True)
+        print(f"\nGenerated Description:", flush=True)
+        print(f"{'-'*60}", flush=True)
+        print(result['description'], flush=True)
+        print(f"{'-'*60}", flush=True)
+
+        # Try to parse as JSON for better display
+        try:
+            description_json = json.loads(result['description'])
+            print(f"\n\nParsed JSON Output:", flush=True)
+            print(f"{'-'*60}", flush=True)
+            print(json.dumps(description_json, indent=2), flush=True)
+            print(f"{'-'*60}", flush=True)
+        except json.JSONDecodeError:
+            print(f"\nNote: Output is not valid JSON", flush=True)
+
+        print(f"\n{'='*60}", flush=True)
+        print("Test Complete!", flush=True)
+        print(f"{'='*60}\n", flush=True)
+    else:
+        print(f"\nError: Failed to process house", flush=True)
+        sys.exit(1)
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Generate descriptions for house images using Qwen3-VL with parallel processing",
@@ -361,8 +443,24 @@ def main():
         default=2,
         help="Number of parallel workers (models to run)"
     )
+    parser.add_argument(
+        "--test", "-t",
+        action="store_true",
+        help="Test mode: process a single random house and print output"
+    )
+    parser.add_argument(
+        "--test-house-id",
+        type=str,
+        default=None,
+        help="Specific house ID to test (only used with --test flag)"
+    )
 
     args = parser.parse_args()
+
+    # Handle test mode
+    if args.test:
+        test_single_house(args.input, args.model_path, args.test_house_id)
+        return
 
     print(f"Starting parallel processing job at {datetime.now()}", flush=True)
     print(f"Arguments: {args}", flush=True)
