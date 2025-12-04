@@ -188,13 +188,17 @@ Analyze the property images and provide the description."""
         house_id = house_data["house_id"]
 
         try:
-            # Build image paths
-            image_paths = [
-                os.path.join(base_path, house_data["images"]["frontal"]),
-                os.path.join(base_path, house_data["images"]["kitchen"]),
-                os.path.join(base_path, house_data["images"]["bedroom"]),
-                os.path.join(base_path, house_data["images"]["bathroom"])
-            ]
+            # Build image paths - use image path as-is if it exists, otherwise join with base_path
+            image_paths = []
+            for img_type in ["frontal", "kitchen", "bedroom", "bathroom"]:
+                img_path = house_data["images"][img_type]
+                # If path exists as-is, use it directly
+                if os.path.exists(img_path):
+                    image_paths.append(img_path)
+                # Otherwise try joining with base_path
+                else:
+                    full_path = os.path.join(base_path, img_path)
+                    image_paths.append(full_path)
 
             # Validate all images exist
             for img_path in image_paths:
