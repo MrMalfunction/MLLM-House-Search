@@ -144,7 +144,12 @@ Analyze the property images and provide the description."""
         text = self.processor.apply_chat_template(
             messages, tokenize=False, add_generation_prompt=True
         )
-        image_inputs, video_inputs, _ = process_vision_info(messages)
+        vision_info = process_vision_info(messages)
+        # Handle both 2 and 3 return values from process_vision_info
+        if len(vision_info) == 3:
+            image_inputs, video_inputs, _ = vision_info
+        else:
+            image_inputs, video_inputs = vision_info
         # Ensure inputs are on the correct GPU device
         device = f"cuda:{self.gpu_id}" if torch.cuda.is_available() else "cpu"
         inputs = self.processor(
