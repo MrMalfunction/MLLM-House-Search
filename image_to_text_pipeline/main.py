@@ -329,7 +329,7 @@ def result_writer_thread(result_queue, output_file, stop_event):
     return successful, failed
 
 
-def test_single_house(input_file, model_path, house_id=None):
+def test_single_house(input_file, model_path, base_path, house_id=None):
     """Test mode: Process a single random house and print the output"""
     print(f"\n{'='*60}", flush=True)
     print("TEST MODE - Processing Single House", flush=True)
@@ -367,9 +367,8 @@ def test_single_house(input_file, model_path, house_id=None):
     print(f"  - Bathroom: {house_data['images']['bathroom']}", flush=True)
 
     # Initialize generator
-    base_path = os.path.dirname(input_file) if os.path.dirname(input_file) else "."
-
-    print(f"\nInitializing model...", flush=True)
+    print(f"\nBase path for images: {base_path}", flush=True)
+    print(f"Initializing model...", flush=True)
     generator = HouseDescriptionGenerator(model_path=model_path, worker_id=0, gpu_id=0)
     generator.initialize_model()
 
@@ -444,6 +443,11 @@ def main():
         help="Number of parallel workers (models to run)"
     )
     parser.add_argument(
+        "--base-path", "-b",
+        default="data/Houses-dataset",
+        help="Base path where house images are stored"
+    )
+    parser.add_argument(
         "--test", "-t",
         action="store_true",
         help="Test mode: process a single random house and print output"
@@ -459,7 +463,7 @@ def main():
 
     # Handle test mode
     if args.test:
-        test_single_house(args.input, args.model_path, args.test_house_id)
+        test_single_house(args.input, args.model_path, args.base_path, args.test_house_id)
         return
 
     print(f"Starting parallel processing job at {datetime.now()}", flush=True)
@@ -543,7 +547,8 @@ def main():
     result_queue = mp.Queue()
     stop_event = mp.Event()
 
-    base_path = os.path.dirname(args.input) if os.path.dirname(args.input) else "."
+    base_path = args.base_path
+    print(f"Base path for images: {base_path}", flush=True)
 
     # Start worker processes
     workers = []
