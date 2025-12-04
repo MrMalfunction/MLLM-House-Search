@@ -220,7 +220,7 @@ Analyze the property images and provide the description."""
             }
 
             # Generate description
-            description, gen_time = self.generate_description(image_paths, metadata, max_tokens=10000)
+            description, gen_time = self.generate_description(image_paths, metadata, max_tokens=4000)
 
             # Build result
             result = {
