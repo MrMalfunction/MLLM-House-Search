@@ -5,10 +5,6 @@ description = "A semantic search system for real estate properties using vision-
 requires-python = ">=3.12"
 
 dependencies = [
-    # Core dependencies
-    "numpy>=1.24.0",
-    "pandas>=2.0.0",
-
     # Environment Configuration
     "python-dotenv>=1.0.0",
 
@@ -21,12 +17,23 @@ dependencies = [
     # Vector Database
     "pinecone>=3.0.0",
 
+    # Image Processing
+    "Pillow>=10.0.0",
+
+    # Web Interface
+    "streamlit>=1.28.0",
+]
+
+[project.optional-dependencies]
+# Pipeline/Batch Processing dependencies (for image-to-text and embedding pipelines)
+pipeline = [
+    # Core dependencies
+    "numpy>=1.24.0",
+    "pandas>=2.0.0",
+
     # Deep Learning Framework
     "torch>=2.1.0",
     "torchvision>=0.15.0",
-
-    # Image Processing
-    "Pillow>=10.0.0",
 
     # Vision-Language Model
     "transformers>=4.57.3",
@@ -40,12 +47,8 @@ dependencies = [
 
     # Progress bars
     "tqdm>=4.66.0",
-
-    # Web Interface
-    "streamlit>=1.28.0",
 ]
 
-[project.optional-dependencies]
 dev = [
     "pytest>=7.0.0",
     "pytest-cov>=4.0.0",
