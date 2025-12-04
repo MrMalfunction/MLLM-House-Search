@@ -2,7 +2,7 @@ import argparse
 from pathlib import Path
 import json
 import sys
-
+import torch
 import numpy as np
 import pandas as pd
 from pinecone import Pinecone, ServerlessSpec  # type: ignore
@@ -77,26 +77,87 @@ def load_embedding_model(model_name: str) -> SentenceTransformer:
     model = SentenceTransformer(model_name)
     return model
 
+def embed_single_text_with_sliding_window(
+    text: str,
+    model: SentenceTransformer,
+    max_tokens: int = 256,
+    stride: int = 128,
+    pool: str = "mean",
+) -> np.ndarray:
+    if not isinstance(text, str) or not text.strip():
+        embedding_dim = model.get_sentence_embedding_dimension()
+        return np.zeros(embedding_dim, dtype=np.float32)
+    
+    tokenizer = model.tokenizer
+    
+    try:
+        # Tokenize the text
+        tokens = tokenizer.encode(text, add_special_tokens=False, truncation=False)
+        
+        # If text fits within token limit, process directly
+        if len(tokens) <= max_tokens:
+            with torch.no_grad():
+                embedding = model.encode(text, convert_to_tensor=True, show_progress_bar=False)
+                return embedding.cpu().numpy().astype(np.float32)
+        
+        # Text is too long - use sliding window approach
+        slices = []
+        for i in range(0, len(tokens), stride):
+            slice_tokens = tokens[i : i + max_tokens]
+            slice_text = tokenizer.decode(slice_tokens, skip_special_tokens=True)
+            slices.append(slice_text)
+        
+        # Encode all slices
+        with torch.no_grad():
+            slice_embeddings = model.encode(
+                slices,
+                convert_to_tensor=True,
+                show_progress_bar=False,
+                batch_size=8
+            )
+        
+        # Pool embeddings from all slices
+        if pool == "mean":
+            final_embedding = slice_embeddings.mean(dim=0)
+        elif pool == "max":
+            final_embedding = slice_embeddings.max(dim=0).values
+        else:
+            raise ValueError(f"Invalid pool method: {pool}. Use 'mean' or 'max'.")
+        
+        return final_embedding.cpu().numpy().astype(np.float32)
+    
+    except Exception as e:
+        print(f"Warning: Error embedding text: {str(e)}")
+        embedding_dim = model.get_sentence_embedding_dimension()
+        return np.zeros(embedding_dim, dtype=np.float32)
+
 
 def compute_embeddings(
     texts: pd.Series,
     model: SentenceTransformer,
-    batch_size: int = 64,
-    show_progress_bar: bool = True,
+    max_tokens: int = 256,
+    stride: int = 128,
+    pool: str = "mean",
 ) -> np.ndarray:
     """Compute embeddings for a series of texts"""
     # Replace NaNs with empty strings
     texts_list = texts.fillna("").tolist()
-    embeddings = model.encode(
-        texts_list,
-        batch_size=batch_size,
-        show_progress_bar=show_progress_bar,
-    )
-    embeddings = np.asarray(embeddings, dtype="float32")
-    return embeddings
+    tokenizer = model.tokenizer
+    token_lengths = [len(tokenizer.encode(text, add_special_tokens=False)) for text in texts_list]
+    n_long = sum(1 for length in token_lengths if length > max_tokens)
+    print(f"Number of texts longer than {max_tokens} tokens: {n_long}/{len(texts_list)}")
+    embeddings = []
+    for idx, text in enumerate(texts_list):
+        embedding = embed_single_text_with_sliding_window(
+            text=text,
+            model=model,
+            max_tokens=max_tokens,
+            stride=stride,
+            pool=pool,
+        )
+        embeddings.append(embedding)
+    return np.array(embeddings, dtype=np.float32)
 
-
-# ---------- Output Saving ----------
 
 def save_outputs(
     df: pd.DataFrame,
@@ -117,9 +178,7 @@ def save_outputs(
 
     print(f"Saved processed CSV to: {csv_path}")
     print(f"Saved embeddings to: {npy_path}")
-
-
-# ---------- Pinecone Operations ----------
+# ---------- Pinecone Integration ----------
 
 def pinecone_index_get(index_name: str, dimension: int, metric: str):
     """Initialize or get existing Pinecone index"""
@@ -211,9 +270,7 @@ def update_to_pinecone(
     # Flush any remaining vectors
     flush_batch()
     print(f"Total vectors upserted: {total_upserted}")
-
-
-# ---------- Pipeline Orchestration ----------
+# ---------- Main Pipeline ----------
 
 def run_pipeline(
     input_csv: str,
@@ -249,7 +306,7 @@ def run_pipeline(
     # Step 5: Compute embeddings
     print(f"\n[5/6] Computing embeddings for column: {text_column}...")
     texts_to_embed: pd.Series = df[text_column]  # type: ignore
-    embeddings = compute_embeddings(texts_to_embed, model=model, batch_size=64)
+    embeddings = compute_embeddings(texts_to_embed, model=model, max_tokens=256, stride=128, pool="mean")
     print(f"Generated embeddings with shape: {embeddings.shape}")
 
     # Step 6: Save outputs
