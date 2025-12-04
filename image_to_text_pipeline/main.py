@@ -448,8 +448,8 @@ def main():
     )
     parser.add_argument(
         "--base-path", "-b",
-        default="data/Houses-dataset",
-        help="Base path where house images are stored"
+        default="../data",
+        help="Base path where house images are stored (relative to script or absolute)"
     )
     parser.add_argument(
         "--test", "-t",
@@ -465,9 +465,12 @@ def main():
 
     args = parser.parse_args()
 
+    # Convert base_path to absolute path
+    base_path = os.path.abspath(args.base_path)
+
     # Handle test mode
     if args.test:
-        test_single_house(args.input, args.model_path, args.base_path, args.test_house_id)
+        test_single_house(args.input, args.model_path, base_path, args.test_house_id)
         return
 
     print(f"Starting parallel processing job at {datetime.now()}", flush=True)
@@ -551,7 +554,6 @@ def main():
     result_queue = mp.Queue()
     stop_event = mp.Event()
 
-    base_path = args.base_path
     print(f"Base path for images: {base_path}", flush=True)
 
     # Start worker processes
