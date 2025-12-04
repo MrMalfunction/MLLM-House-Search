@@ -48,189 +48,222 @@ class HouseDescriptionGenerator:
         # Set the correct GPU device
         if torch.cuda.is_available():
             torch.cuda.set_device(self.gpu_id)
-            print(f"[Worker {self.worker_id}] Using GPU {self.gpu_id}: {torch.cuda.get_device_name(self.gpu_id)}", flush=True)
             torch.cuda.empty_cache()
+            gc.collect()
+            device_name = torch.cuda.get_device_name(self.gpu_id)
+            print(f"[Worker {self.worker_id}] GPU detected: {device_name} (using cuda:{self.gpu_id})", flush=True)
+            print(f"[Worker {self.worker_id}] Current CUDA device: {torch.cuda.current_device()}", flush=True)
         else:
-            print(f"[Worker {self.worker_id}] CUDA not available, using CPU", flush=True)
+            print(f"[Worker {self.worker_id}] No GPU detected, using CPU", flush=True)
+
+        # Determine dtype
+        if torch.cuda.is_available():
+            device_name = torch.cuda.get_device_name(self.gpu_id)
+            use_bf16 = any(gpu in device_name for gpu in ["A100", "H100", "L4", "4090"])
+            dtype = torch.bfloat16 if use_bf16 else torch.float16
+            print(f"[Worker {self.worker_id}] Using dtype: {dtype}", flush=True)
+        else:
+            dtype = torch.float32
+
+        # Load processor and model
+        print(f"[Worker {self.worker_id}] Loading from: {self.model_path}", flush=True)
+
+        if not os.path.exists(self.model_path):
+            print(f"[Worker {self.worker_id}] Model not found locally. Downloading {MODEL_ID}...", flush=True)
+            from huggingface_hub import snapshot_download
+            snapshot_download(repo_id=MODEL_ID, local_dir=self.model_path)
+
+        self.processor = AutoProcessor.from_pretrained(
+            self.model_path,
+            trust_remote_code=True
+        )
+
+        # Load model to the assigned GPU
+        print(f"[Worker {self.worker_id}] Loading model to cuda:{self.gpu_id}", flush=True)
+
+        self.model = AutoModelForVision2Seq.from_pretrained(
+            self.model_path,
+            torch_dtype=dtype,
+            device_map={"": self.gpu_id},  # Assign to the specific GPU
+            trust_remote_code=True,
+            low_cpu_mem_usage=True,
+            attn_implementation="eager"
+        )
+
+        self.model.eval()
+        for param in self.model.parameters():
+            param.requires_grad = False
+
+        print(f"[Worker {self.worker_id}] Model loaded successfully on {next(self.model.parameters()).device}", flush=True)
+
+        if torch.cuda.is_available():
+            print(f"[Worker {self.worker_id}] GPU Memory: {torch.cuda.memory_allocated(self.gpu_id) / 1024**3:.2f} GB", flush=True)
+
+    def load_image(self, path):
+        """Load and convert image to RGB"""
+        if not os.path.exists(path):
+            raise FileNotFoundError(f"Image not found: {path}")
+        img = Image.open(path)
+        if img.mode != "RGB":
+            img = img.convert("RGB")
+        return img
+
+    def generate_description(self, image_paths, metadata, max_tokens=200):
+        """Generate description from multiple images with metadata"""
+        if self.model is None or self.processor is None:
+            raise RuntimeError("Model not initialized. Call initialize_model() first.")
+
+        # Load images
+        images = [self.load_image(path) for path in image_paths]
+
+        # Construct messages
+        messages = [
+            {"role": "system", "content": [{"type": "text", "text": SYSTEM_PROMPT}]}
+        ]
+
+        # Add images and query with metadata
+        content = []
+        for img in images:
+            content.append({"type": "image", "image": img})
+
+        # Create metadata string (without house_id)
+        metadata_str = f"""Property Metadata:
+- Bedrooms: {metadata.get('bedrooms', 'N/A')}
+- Bathrooms: {metadata.get('bathrooms', 'N/A')}
+- Area: {metadata.get('area', 'N/A')}
+- Zipcode: {metadata.get('zipcode', 'N/A')}
+- Price: {metadata.get('price', 'N/A')}
+
+Analyze the property images and provide the description."""
+
+        content.append({"type": "text", "text": metadata_str})
+
+        messages.append({"role": "user", "content": content})
+
+        # Prepare inputs
+        text = self.processor.apply_chat_template(
+            messages, tokenize=False, add_generation_prompt=True
+        )
+        vision_info = process_vision_info(messages)
+        # Handle both 2 and 3 return values from process_vision_info
+        if len(vision_info) == 3:
+            image_inputs, video_inputs, _ = vision_info
+        else:
+            image_inputs, video_inputs = vision_info
+        # Ensure inputs are on the correct GPU device
+        device = f"cuda:{self.gpu_id}" if torch.cuda.is_available() else "cpu"
+        inputs = self.processor(
+            text=[text],
+            images=image_inputs,
+            videos=video_inputs,
+            padding=True,
+            return_tensors="pt",
+        ).to(device)
+
+        # Generate
+        start_time = time.time()
+        with torch.inference_mode():
+            generated_ids = self.model.generate(
+                **inputs,
+                max_new_tokens=max_tokens,
+                min_new_tokens=50,
+                do_sample=False,
+                num_beams=1,
+                use_cache=self.use_cache,
+                pad_token_id=self.processor.tokenizer.pad_token_id,
+                eos_token_id=self.processor.tokenizer.eos_token_id,
+            )
+        generation_time = time.time() - start_time
+
+        # Decode
+        generated_ids_trimmed = [
+            out_ids[len(in_ids):]
+            for in_ids, out_ids in zip(inputs.input_ids, generated_ids)
+        ]
+        output_text = self.processor.batch_decode(
+            generated_ids_trimmed,
+            skip_special_tokens=True,
+            clean_up_tokenization_spaces=False
+        )[0]
+
+        return output_text, generation_time
+
+    def process_house(self, house_data, base_path=""):
+        """Process a single house"""
+        house_id = house_data["house_id"]
 
         try:
-            # Initialize processor
-            print(f"[Worker {self.worker_id}][{datetime.now().strftime('%H:%M:%S')}] Loading processor from {self.model_path}...", flush=True)
-            self.processor = AutoProcessor.from_pretrained(
-                self.model_path,
-                trust_remote_code=True,
-                local_files_only=True
-            )
-            print(f"[Worker {self.worker_id}][{datetime.now().strftime('%H:%M:%S')}] Processor loaded", flush=True)
+            # Build image paths - use image path as-is if it exists, otherwise join with base_path
+            image_paths = []
+            for img_type in ["frontal", "kitchen", "bedroom", "bathroom"]:
+                img_path = house_data["images"][img_type]
+                # If path exists as-is, use it directly
+                if os.path.exists(img_path):
+                    image_paths.append(img_path)
+                # Otherwise try joining with base_path
+                else:
+                    full_path = os.path.join(base_path, img_path)
+                    image_paths.append(full_path)
 
-            # Initialize model
-            print(f"[Worker {self.worker_id}][{datetime.now().strftime('%H:%M:%S')}] Loading model from {self.model_path}...", flush=True)
-            device_map = f"cuda:{self.gpu_id}" if torch.cuda.is_available() else "cpu"
+            # Validate all images exist
+            for img_path in image_paths:
+                if not os.path.exists(img_path):
+                    raise FileNotFoundError(f"Image not found: {img_path}")
 
-            self.model = AutoModelForVision2Seq.from_pretrained(
-                self.model_path,
-                torch_dtype=torch.bfloat16,
-                device_map=device_map,
-                trust_remote_code=True,
-                local_files_only=True,
-                attn_implementation="flash_attention_2"
-            )
-            print(f"[Worker {self.worker_id}][{datetime.now().strftime('%H:%M:%S')}] Model loaded on {device_map}", flush=True)
-
-            # Print memory usage
-            if torch.cuda.is_available():
-                allocated = torch.cuda.memory_allocated(self.gpu_id) / 1024**3
-                reserved = torch.cuda.memory_reserved(self.gpu_id) / 1024**3
-                print(f"[Worker {self.worker_id}] GPU {self.gpu_id} Memory: {allocated:.2f}GB allocated, {reserved:.2f}GB reserved", flush=True)
-
-            print(f"[Worker {self.worker_id}][{datetime.now().strftime('%H:%M:%S')}] Model initialization complete", flush=True)
-
-        except Exception as e:
-            print(f"[Worker {self.worker_id}] Error initializing model: {e}", flush=True)
-            traceback.print_exc()
-            raise
-
-    def load_image(self, image_path):
-        """Load an image from file"""
-        try:
-            return Image.open(image_path).convert('RGB')
-        except Exception as e:
-            print(f"[Worker {self.worker_id}] Error loading image {image_path}: {e}", flush=True)
-            raise
-
-    def generate_description(self, image_path):
-        """Generate a description for a single image"""
-        try:
-            # Load image
-            image = self.load_image(image_path)
-
-            # Prepare messages
-            messages = [
-                {
-                    "role": "user",
-                    "content": [
-                        {
-                            "type": "image",
-                            "image": image_path,
-                        },
-                        {
-                            "type": "text",
-                            "text": SYSTEM_PROMPT
-                        }
-                    ]
-                }
-            ]
-
-            # Prepare inputs
-            text = self.processor.apply_chat_template(
-                messages,
-                tokenize=False,
-                add_generation_prompt=True
-            )
-
-            image_inputs, video_inputs = process_vision_info(messages)
-
-            inputs = self.processor(
-                text=[text],
-                images=image_inputs,
-                videos=video_inputs,
-                padding=True,
-                return_tensors="pt"
-            )
-
-            # Move inputs to correct device
-            device = f"cuda:{self.gpu_id}" if torch.cuda.is_available() else "cpu"
-            inputs = inputs.to(device)
-
-            # Generate
-            with torch.no_grad():
-                generated_ids = self.model.generate(
-                    **inputs,
-                    max_new_tokens=512,
-                    do_sample=True,
-                    temperature=0.7,
-                    top_p=0.9
-                )
-
-            # Trim generated tokens
-            generated_ids_trimmed = [
-                out_ids[len(in_ids):] for in_ids, out_ids in zip(inputs.input_ids, generated_ids)
-            ]
-
-            # Decode output
-            output_text = self.processor.batch_decode(
-                generated_ids_trimmed,
-                skip_special_tokens=True,
-                clean_up_tokenization_spaces=False
-            )[0]
-
-            return output_text
-
-        except Exception as e:
-            print(f"[Worker {self.worker_id}] Error generating description for {image_path}: {e}", flush=True)
-            traceback.print_exc()
-            raise
-
-    def process_house(self, house_id, image_paths, base_path):
-        """Process all images for a house and generate structured output"""
-        try:
-            start_time = time.time()
-
-            descriptions = {}
-            for image_name, relative_path in image_paths.items():
-                # Construct full path
-                full_path = os.path.join(base_path, relative_path)
-
-                if not os.path.exists(full_path):
-                    print(f"[Worker {self.worker_id}] Warning: Image not found: {full_path}", flush=True)
-                    descriptions[image_name] = "ERROR: Image file not found"
-                    continue
-
-                # Generate description
-                try:
-                    description = self.generate_description(full_path)
-                    descriptions[image_name] = description
-                except Exception as e:
-                    descriptions[image_name] = f"ERROR: {str(e)}"
-
-            elapsed = time.time() - start_time
-
-            # Structure output
-            result = {
-                'house_id': house_id,
-                'timestamp': datetime.now().isoformat(),
-                'processing_time_seconds': round(elapsed, 2),
-                'num_images': len(image_paths),
-                **descriptions  # Unpack all descriptions as individual columns
+            # Prepare metadata (without house_id)
+            metadata = {
+                "bedrooms": house_data["metadata"].get("bedrooms"),
+                "bathrooms": house_data["metadata"].get("bathrooms"),
+                "area": house_data["metadata"].get("area"),
+                "zipcode": house_data["metadata"].get("zipcode"),
+                "price": house_data["metadata"].get("price")
             }
 
-            print(f"[Worker {self.worker_id}] ✅ Completed house {house_id} in {elapsed:.1f}s", flush=True)
+            # Generate description
+            description, gen_time = self.generate_description(image_paths, metadata, max_tokens=10000)
+
+            # Build result
+            result = {
+                "house_id": house_id,
+                "bedrooms": house_data["metadata"].get("bedrooms"),
+                "bathrooms": house_data["metadata"].get("bathrooms"),
+                "area": house_data["metadata"].get("area"),
+                "zipcode": house_data["metadata"].get("zipcode"),
+                "price": house_data["metadata"].get("price"),
+                "frontal_image": house_data["images"]["frontal"],
+                "kitchen_image": house_data["images"]["kitchen"],
+                "bedroom_image": house_data["images"]["bedroom"],
+                "bathroom_image": house_data["images"]["bathroom"],
+                "description": description,
+                "generation_time_seconds": gen_time,
+                "processed_at": datetime.now().isoformat()
+            }
 
             return result
 
         except Exception as e:
-            print(f"[Worker {self.worker_id}] ❌ Failed to process house {house_id}: {e}", flush=True)
+            print(f"[Worker {self.worker_id}] Error processing house {house_id}: {e}", flush=True)
             traceback.print_exc()
-            raise
+            sys.stdout.flush()
+            return None
 
 
-def worker_process(worker_id, work_queue, result_queue, model_path, base_path, stop_event, gpu_id):
-    """Worker process that processes houses"""
+def worker_process(worker_id, work_queue, result_queue, model_path, base_path, stop_event, gpu_id=0):
+    """Worker process that processes houses from the queue"""
     try:
-        print(f"[Worker {worker_id}] Starting on GPU {gpu_id}", flush=True)
+        print(f"[Worker {worker_id}] Starting worker process on GPU {gpu_id}", flush=True)
+        print(f"[Worker {worker_id}] CUDA_VISIBLE_DEVICES: {os.environ.get('CUDA_VISIBLE_DEVICES', 'Not set')}", flush=True)
 
-        # Initialize generator
-        generator = HouseDescriptionGenerator(
-            model_path=model_path,
-            worker_id=worker_id,
-            gpu_id=gpu_id
-        )
+        # Initialize generator for this worker
+        generator = HouseDescriptionGenerator(model_path=model_path, worker_id=worker_id, gpu_id=gpu_id)
         generator.initialize_model()
 
-        processed = 0
+        print(f"[Worker {worker_id}] Ready to process houses", flush=True)
+
+        processed_count = 0
         while not stop_event.is_set():
             try:
-                # Get work from queue
+                # Get work from queue with timeout
                 house_data = work_queue.get(timeout=1)
 
                 if house_data is None:  # Poison pill
@@ -238,27 +271,28 @@ def worker_process(worker_id, work_queue, result_queue, model_path, base_path, s
                     break
 
                 house_id = house_data['house_id']
-                image_paths = house_data['image_paths']
-
                 print(f"[Worker {worker_id}] Processing house {house_id}...", flush=True)
 
-                # Process the house
-                result = generator.process_house(house_id, image_paths, base_path)
-                result_queue.put(('success', result))
-                processed += 1
+                result = generator.process_house(house_data, base_path)
+
+                if result:
+                    result_queue.put(('success', result))
+                    processed_count += 1
+                    print(f"[Worker {worker_id}] ✓ Completed house {house_id} ({result['generation_time_seconds']:.2f}s) [Total: {processed_count}]", flush=True)
+                else:
+                    result_queue.put(('failed', house_id))
+                    print(f"[Worker {worker_id}] ✗ Failed house {house_id}", flush=True)
 
             except Empty:
                 continue
             except Exception as e:
-                print(f"[Worker {worker_id}] Error processing house: {e}", flush=True)
+                print(f"[Worker {worker_id}] Error in worker loop: {e}", flush=True)
                 traceback.print_exc()
-                if 'house_id' in locals():
-                    result_queue.put(('failed', house_id))
 
-        print(f"[Worker {worker_id}] Shutting down. Processed {processed} houses.", flush=True)
+        print(f"[Worker {worker_id}] Worker shutting down. Processed {processed_count} houses.", flush=True)
 
     except Exception as e:
-        print(f"[Worker {worker_id}] Fatal error: {e}", flush=True)
+        print(f"[Worker {worker_id}] Fatal error in worker: {e}", flush=True)
         traceback.print_exc()
 
 
@@ -271,9 +305,9 @@ def result_writer_thread(result_queue, output_file, stop_event, batch_size=10, f
 
     def flush_buffer():
         """Flush the buffer to disk"""
-        nonlocal buffer, successful
+        nonlocal successful
         if not buffer:
-            return 0
+            return
 
         try:
             df_new = pd.DataFrame(buffer)
@@ -287,15 +321,13 @@ def result_writer_thread(result_queue, output_file, stop_event, batch_size=10, f
                 total = len(df_new)
 
             flushed_count = len(buffer)
-            house_ids = [r['house_id'] for r in buffer]
-            buffer.clear()
+            house_ids = [str(r['house_id']) for r in buffer]
             print(f"[Writer] 💾 Flushed {flushed_count} houses to disk (Total: {total} houses in file)", flush=True)
             print(f"[Writer] 💾 Saved: {', '.join(house_ids)}", flush=True)
-            return flushed_count
+            buffer.clear()
         except Exception as e:
             print(f"[Writer] ⚠️ Failed to flush buffer: {e}", flush=True)
             traceback.print_exc()
-            return 0
 
     while not stop_event.is_set():
         try:
@@ -340,72 +372,86 @@ def result_writer_thread(result_queue, output_file, stop_event, batch_size=10, f
     return successful, failed
 
 
-def test_single_house(input_file, model_path, base_path, test_house_id=None):
-    """Test mode: process a single random house and print output"""
-    print("="*60)
-    print("TEST MODE")
-    print("="*60)
+def test_single_house(input_file, model_path, base_path, house_id=None):
+    """Test mode: Process a single random house and print the output"""
+    print(f"\n{'='*60}", flush=True)
+    print("TEST MODE - Processing Single House", flush=True)
+    print(f"{'='*60}\n", flush=True)
 
     # Load house data
+    print(f"Loading house data from {input_file}...", flush=True)
     with open(input_file, 'r') as f:
         houses_data = json.load(f)
+    print(f"Found {len(houses_data)} houses", flush=True)
 
     # Select house to test
-    if test_house_id:
-        house_data = next((h for h in houses_data if h['house_id'] == test_house_id), None)
+    if house_id:
+        house_data = next((h for h in houses_data if h['house_id'] == house_id), None)
         if not house_data:
-            print(f"Error: House ID '{test_house_id}' not found in input file")
+            print(f"Error: House ID {house_id} not found", flush=True)
             sys.exit(1)
-        print(f"Testing specific house: {test_house_id}")
+        print(f"Testing specified house ID: {house_id}", flush=True)
     else:
         house_data = random.choice(houses_data)
-        print(f"Testing random house: {house_data['house_id']}")
+        print(f"Randomly selected house ID: {house_data['house_id']}", flush=True)
 
-    print(f"House ID: {house_data['house_id']}")
-    print(f"Number of images: {len(house_data['image_paths'])}")
-    print(f"Image paths:")
-    for img_name, img_path in house_data['image_paths'].items():
-        full_path = os.path.join(base_path, img_path)
-        exists = "✓" if os.path.exists(full_path) else "✗"
-        print(f"  {exists} {img_name}: {img_path}")
+    # Display house info
+    print(f"\nHouse Metadata:", flush=True)
+    print(f"  - Bedrooms: {house_data['metadata'].get('bedrooms')}", flush=True)
+    print(f"  - Bathrooms: {house_data['metadata'].get('bathrooms')}", flush=True)
+    print(f"  - Area: {house_data['metadata'].get('area')}", flush=True)
+    print(f"  - Zipcode: {house_data['metadata'].get('zipcode')}", flush=True)
+    print(f"  - Price: {house_data['metadata'].get('price')}", flush=True)
 
-    print("\n" + "="*60)
-    print("INITIALIZING MODEL")
-    print("="*60)
+    print(f"\nImages:", flush=True)
+    print(f"  - Frontal: {house_data['images']['frontal']}", flush=True)
+    print(f"  - Kitchen: {house_data['images']['kitchen']}", flush=True)
+    print(f"  - Bedroom: {house_data['images']['bedroom']}", flush=True)
+    print(f"  - Bathroom: {house_data['images']['bathroom']}", flush=True)
 
     # Initialize generator
+    print(f"\nBase path for images: {base_path}", flush=True)
+    print(f"Initializing model...", flush=True)
     generator = HouseDescriptionGenerator(model_path=model_path, worker_id=0, gpu_id=0)
     generator.initialize_model()
 
-    print("\n" + "="*60)
-    print("PROCESSING HOUSE")
-    print("="*60)
+    # Process the house
+    print(f"\n{'='*60}", flush=True)
+    print("Processing house...", flush=True)
+    print(f"{'='*60}\n", flush=True)
 
-    # Process house
     start_time = time.time()
-    result = generator.process_house(
-        house_data['house_id'],
-        house_data['image_paths'],
-        base_path
-    )
-    elapsed = time.time() - start_time
+    result = generator.process_house(house_data, base_path)
+    processing_time = time.time() - start_time
 
-    print("\n" + "="*60)
-    print("RESULTS")
-    print("="*60)
-    print(f"Processing time: {elapsed:.2f} seconds")
-    print(f"\nStructured output:")
-    print(json.dumps(result, indent=2))
+    if result:
+        print(f"\n{'='*60}", flush=True)
+        print("RESULT", flush=True)
+        print(f"{'='*60}\n", flush=True)
 
-    # Save to test output file
-    test_output = "test_output.parquet"
-    df = pd.DataFrame([result])
-    df.to_parquet(test_output, index=False)
-    print(f"\n✓ Saved test output to: {test_output}")
+        print(f"House ID: {result['house_id']}", flush=True)
+        print(f"Processing Time: {processing_time:.2f} seconds", flush=True)
+        print(f"\nGenerated Description:", flush=True)
+        print(f"{'-'*60}", flush=True)
+        print(result['description'], flush=True)
+        print(f"{'-'*60}", flush=True)
 
-    print("\n" + "="*60)
-    print("TEST COMPLETE")
-    print("="*60)
+        # Try to parse as JSON for better display
+        try:
+            description_json = json.loads(result['description'])
+            print(f"\n\nParsed JSON Output:", flush=True)
+            print(f"{'-'*60}", flush=True)
+            print(json.dumps(description_json, indent=2), flush=True)
+            print(f"{'-'*60}", flush=True)
+        except json.JSONDecodeError:
+            print(f"\nNote: Output is not valid JSON", flush=True)
+
+        print(f"\n{'='*60}", flush=True)
+        print("Test Complete!", flush=True)
+        print(f"{'='*60}\n", flush=True)
+    else:
+        print(f"\nError: Failed to process house", flush=True)
+        sys.exit(1)
 
 
 def main():
@@ -465,7 +511,7 @@ def main():
         "--flush-interval",
         type=int,
         default=30,
-        help="Seconds between automatic buffer flushes"
+        help="Maximum seconds between disk writes"
     )
 
     args = parser.parse_args()
@@ -505,6 +551,7 @@ def main():
         print(f"Using {num_gpus} GPUs for parallel processing", flush=True)
 
     print(f"Number of workers: {args.num_workers}", flush=True)
+    print(f"Batch size: {args.batch_size}, Flush interval: {args.flush_interval}s", flush=True)
 
     # Validate input file
     if not os.path.exists(args.input):
@@ -560,7 +607,6 @@ def main():
     stop_event = mp.Event()
 
     print(f"Base path for images: {base_path}", flush=True)
-    print(f"Batch size: {args.batch_size}, Flush interval: {args.flush_interval}s", flush=True)
 
     # Start worker processes
     workers = []
