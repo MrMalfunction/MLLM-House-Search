@@ -10,7 +10,7 @@ import gc
 import time
 import random
 from PIL import Image
-from transformers import AutoProcessor, AutoModelForVision2Seq
+from transformers import AutoProcessor, AutoModelForVision2Seq, StoppingCriteria, StoppingCriteriaList
 from qwen_vl_utils import process_vision_info
 import multiprocessing as mp
 from queue import Empty
@@ -31,6 +31,24 @@ def load_prompt():
         return f.read().strip()
 
 SYSTEM_PROMPT = load_prompt()
+
+class TextStoppingCriteria(StoppingCriteria):
+    """Custom stopping criteria that checks for specific text sequences in decoded output"""
+    def __init__(self, tokenizer, stop_sequences, initial_length):
+        self.tokenizer = tokenizer
+        self.stop_sequences = stop_sequences
+        self.initial_length = initial_length
+
+    def __call__(self, input_ids, scores, **kwargs):
+        # Decode only the newly generated tokens
+        generated_ids = input_ids[0][self.initial_length:]
+        generated_text = self.tokenizer.decode(generated_ids, skip_special_tokens=True)
+
+        # Check if any stop sequence appears in the generated text
+        for stop_seq in self.stop_sequences:
+            if stop_seq in generated_text:
+                return True
+        return False
 
 class HouseDescriptionGenerator:
     def __init__(self, model_path=None, use_cache=True, worker_id=0, gpu_id=0):
@@ -160,15 +178,12 @@ Analyze the property images and provide the description."""
             return_tensors="pt",
         ).to(device)
 
-        # Create stop words tokens for "END OF DESCRIPTION"
-        stop_words = ["END OF DESCRIPTION", "END OF DESCRIPTION\n"]
-        stop_token_ids = []
-        for stop_word in stop_words:
-            tokens = self.processor.tokenizer.encode(stop_word, add_special_tokens=False)
-            stop_token_ids.extend(tokens)
-
-        # Add EOS token
-        stop_token_ids.append(self.processor.tokenizer.eos_token_id)
+        # Create custom stopping criteria to detect "END OF DESCRIPTION"
+        stop_sequences = ["END OF DESCRIPTION", "Bathroom Image End"]
+        initial_length = inputs.input_ids.shape[1]
+        stopping_criteria = StoppingCriteriaList([
+            TextStoppingCriteria(self.processor.tokenizer, stop_sequences, initial_length)
+        ])
 
         # Generate
         start_time = time.time()
@@ -177,11 +192,16 @@ Analyze the property images and provide the description."""
                 **inputs,
                 max_new_tokens=max_tokens,
                 min_new_tokens=50,
-                do_sample=False,
+                do_sample=True,
+                temperature=0.7,
+                top_p=0.9,
+                repetition_penalty=1.2,
+                no_repeat_ngram_size=3,
                 num_beams=1,
                 use_cache=self.use_cache,
                 pad_token_id=self.processor.tokenizer.pad_token_id,
-                eos_token_id=stop_token_ids,
+                eos_token_id=self.processor.tokenizer.eos_token_id,
+                stopping_criteria=stopping_criteria,
             )
         generation_time = time.time() - start_time
 
