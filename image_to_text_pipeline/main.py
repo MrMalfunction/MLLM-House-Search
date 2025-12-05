@@ -160,6 +160,16 @@ Analyze the property images and provide the description."""
             return_tensors="pt",
         ).to(device)
 
+        # Create stop words tokens for "END OF DESCRIPTION"
+        stop_words = ["END OF DESCRIPTION", "END OF DESCRIPTION\n"]
+        stop_token_ids = []
+        for stop_word in stop_words:
+            tokens = self.processor.tokenizer.encode(stop_word, add_special_tokens=False)
+            stop_token_ids.extend(tokens)
+
+        # Add EOS token
+        stop_token_ids.append(self.processor.tokenizer.eos_token_id)
+
         # Generate
         start_time = time.time()
         with torch.inference_mode():
@@ -171,7 +181,7 @@ Analyze the property images and provide the description."""
                 num_beams=1,
                 use_cache=self.use_cache,
                 pad_token_id=self.processor.tokenizer.pad_token_id,
-                eos_token_id=self.processor.tokenizer.eos_token_id,
+                eos_token_id=stop_token_ids,
             )
         generation_time = time.time() - start_time
 
@@ -219,10 +229,10 @@ Analyze the property images and provide the description."""
                 "price": house_data["metadata"].get("price")
             }
 
-            # Generate description
-            description, gen_time = self.generate_description(image_paths, metadata, max_tokens=3000)
+            # Generate description - return raw output immediately, parsing will be done by writer thread
+            raw_description, gen_time = self.generate_description(image_paths, metadata, max_tokens=3000)
 
-            # Build result
+            # Build result with raw output only - no parsing here to free up GPU worker
             result = {
                 "house_id": house_id,
                 "bedrooms": house_data["metadata"].get("bedrooms"),
@@ -234,7 +244,7 @@ Analyze the property images and provide the description."""
                 "kitchen_image": house_data["images"]["kitchen"],
                 "bedroom_image": house_data["images"]["bedroom"],
                 "bathroom_image": house_data["images"]["bathroom"],
-                "description": description,
+                "raw_output": raw_description,
                 "generation_time_seconds": gen_time,
                 "processed_at": datetime.now().isoformat()
             }
@@ -296,6 +306,53 @@ def worker_process(worker_id, work_queue, result_queue, model_path, base_path, s
         traceback.print_exc()
 
 
+def parse_delimited_output(output_text):
+    """Parse the delimiter-based output into separate fields"""
+    result = {
+        "short_description": "",
+        "frontal_description": "",
+        "kitchen_description": "",
+        "bedroom_description": "",
+        "bathroom_description": ""
+    }
+
+    try:
+        # Extract short description
+        if "Short Description" in output_text and "Short Description End" in output_text:
+            start = output_text.find("Short Description") + len("Short Description")
+            end = output_text.find("Short Description End")
+            result["short_description"] = output_text[start:end].strip()
+
+        # Extract frontal image description
+        if "Frontal Image" in output_text and "Frontal Image End" in output_text:
+            start = output_text.find("Frontal Image") + len("Frontal Image")
+            end = output_text.find("Frontal Image End")
+            result["frontal_description"] = output_text[start:end].strip()
+
+        # Extract kitchen description
+        if "Kitchen Image" in output_text and "Kitchen Image End" in output_text:
+            start = output_text.find("Kitchen Image") + len("Kitchen Image")
+            end = output_text.find("Kitchen Image End")
+            result["kitchen_description"] = output_text[start:end].strip()
+
+        # Extract bedroom description
+        if "Bedroom Image" in output_text and "Bedroom Image End" in output_text:
+            start = output_text.find("Bedroom Image") + len("Bedroom Image")
+            end = output_text.find("Bedroom Image End")
+            result["bedroom_description"] = output_text[start:end].strip()
+
+        # Extract bathroom description
+        if "Bathroom Image" in output_text and "Bathroom Image End" in output_text:
+            start = output_text.find("Bathroom Image") + len("Bathroom Image")
+            end = output_text.find("Bathroom Image End")
+            result["bathroom_description"] = output_text[start:end].strip()
+
+    except Exception as e:
+        print(f"[Writer] Warning: Error parsing delimited output: {e}", flush=True)
+
+    return result
+
+
 def result_writer_thread(result_queue, output_file, stop_event, batch_size=10, flush_interval=30):
     """Thread that writes results to file in batches for better performance"""
     successful = 0
@@ -338,9 +395,20 @@ def result_writer_thread(result_queue, output_file, stop_event, batch_size=10, f
                 flush_buffer()
                 break
             elif result_type == 'success':
+                # Parse the raw output into separate columns here (not in GPU worker)
+                raw_output = result_data.get('raw_output', '')
+                parsed = parse_delimited_output(raw_output)
+
+                # Add parsed fields to result
+                result_data['short_description'] = parsed['short_description']
+                result_data['frontal_description'] = parsed['frontal_description']
+                result_data['kitchen_description'] = parsed['kitchen_description']
+                result_data['bedroom_description'] = parsed['bedroom_description']
+                result_data['bathroom_description'] = parsed['bathroom_description']
+
                 buffer.append(result_data)
                 successful += 1
-                print(f"[Writer] 📥 Buffered house {result_data['house_id']} ({len(buffer)} in buffer, {successful} total)", flush=True)
+                print(f"[Writer] 📥 Parsed and buffered house {result_data['house_id']} ({len(buffer)} in buffer, {successful} total)", flush=True)
 
                 # Flush if buffer is full or enough time has passed
                 current_time = time.time()
@@ -431,20 +499,28 @@ def test_single_house(input_file, model_path, base_path, house_id=None):
 
         print(f"House ID: {result['house_id']}", flush=True)
         print(f"Processing Time: {processing_time:.2f} seconds", flush=True)
-        print(f"\nGenerated Description:", flush=True)
+
+        print(f"\n\nRaw Output:", flush=True)
         print(f"{'-'*60}", flush=True)
-        print(result['description'], flush=True)
+        print(result['raw_output'], flush=True)
         print(f"{'-'*60}", flush=True)
 
-        # Try to parse as JSON for better display
-        try:
-            description_json = json.loads(result['description'])
-            print(f"\n\nParsed JSON Output:", flush=True)
-            print(f"{'-'*60}", flush=True)
-            print(json.dumps(description_json, indent=2), flush=True)
-            print(f"{'-'*60}", flush=True)
-        except json.JSONDecodeError:
-            print(f"\nNote: Output is not valid JSON", flush=True)
+        # Parse the output to display parsed sections
+        parsed = parse_delimited_output(result['raw_output'])
+
+        print(f"\n\nParsed Descriptions:", flush=True)
+        print(f"{'-'*60}", flush=True)
+        print(f"\nShort Description:", flush=True)
+        print(parsed['short_description'], flush=True)
+        print(f"\nFrontal Description:", flush=True)
+        print(parsed['frontal_description'], flush=True)
+        print(f"\nKitchen Description:", flush=True)
+        print(parsed['kitchen_description'], flush=True)
+        print(f"\nBedroom Description:", flush=True)
+        print(parsed['bedroom_description'], flush=True)
+        print(f"\nBathroom Description:", flush=True)
+        print(parsed['bathroom_description'], flush=True)
+        print(f"{'-'*60}", flush=True)
 
         print(f"\n{'='*60}", flush=True)
         print("Test Complete!", flush=True)

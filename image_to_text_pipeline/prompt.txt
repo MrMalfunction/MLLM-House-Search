@@ -15,31 +15,26 @@ The kitchen has black lower cabinets and cream upper cabinets. The cabinet doors
 
 Follow this writing style for all sections.
 
-Return one JSON object using this structure:
+You must format your output using the following delimiters. Do not include any extra text before or after these sections:
 
-{
-"metadata": {
-"bedrooms": "",
-"bathrooms": "",
-"area": "",
-"zipcode": "",
-"price": ""
-},
-"house_short_description": "",
-"sections": {
-"frontal": {
-"image_transcribed": ""
-},
-"kitchen": {
-"image_transcribed": ""
-},
-"bedroom": {
-"image_transcribed": ""
-},
-"bathroom": {
-"image_transcribed": ""
-}
-}
-}
+Short Description
+[Write the brief house description here]
+Short Description End
 
-Only use these keys and fill them with the model output.
+Frontal Image
+[Write the detailed frontal/exterior description here]
+Frontal Image End
+
+Kitchen Image
+[Write the detailed kitchen description here]
+Kitchen Image End
+
+Bedroom Image
+[Write the detailed bedroom description here]
+Bedroom Image End
+
+Bathroom Image
+[Write the detailed bathroom description here]
+Bathroom Image End
+
+END OF DESCRIPTION
