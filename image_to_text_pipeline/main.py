@@ -209,7 +209,7 @@ Analyze the property images and provide the description."""
         with torch.inference_mode():
             generated_ids = self.model.generate(
                 **inputs,
-                max_new_tokens=800,
+                max_new_tokens=1200,
                 min_new_tokens=0,  # Allow early stopping
                 do_sample=False,
                 num_beams=1,
