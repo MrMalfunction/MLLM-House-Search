@@ -54,7 +54,7 @@ class TextStoppingCriteria(StoppingCriteria):
         self.initial_length = initial_length
 
     def __call__(self, input_ids, scores, **kwargs):  # type: ignore
-        # Decode only newly generated tokens
+        # Decode only newly generated tokens (skip special tokens to match content)
         generated_ids = input_ids[0][self.initial_length:]
         generated_text = self.tokenizer.decode(generated_ids, skip_special_tokens=True)
 
@@ -62,6 +62,16 @@ class TextStoppingCriteria(StoppingCriteria):
         for stop_seq in self.stop_sequences:
             if stop_seq in generated_text:
                 return True
+
+        # Also stop if we see excessive repetition (sign of model breakdown)
+        if len(generated_text) > 500:
+            words = generated_text[-500:].split()
+            if len(words) > 50:
+                # Check if last 50 words are highly repetitive
+                unique_ratio = len(set(words[-50:])) / 50.0
+                if unique_ratio < 0.3:  # Less than 30% unique words
+                    return True
+
         return False
 
 
@@ -187,25 +197,25 @@ Analyze the property images and provide the description."""
             return_tensors="pt",
         ).to(device)
 
-        # Setup stopping criteria - only use ### as stop word
+        # Setup stopping criteria - look for the final marker
         stop_sequences = ["###"]
         initial_length = inputs.input_ids.shape[1]
         stopping_criteria = StoppingCriteriaList([
             TextStoppingCriteria(self.processor.tokenizer, stop_sequences, initial_length)
         ])
 
-        # Generate with greedy decoding and strict limits to prevent rambling
+        # Generate with strict settings to prevent rambling
         start_time = time.time()
         with torch.inference_mode():
             generated_ids = self.model.generate(
                 **inputs,
-                max_new_tokens=2000,
-                min_new_tokens=100,
+                max_new_tokens=800,
+                min_new_tokens=0,  # Allow early stopping
                 do_sample=False,
                 num_beams=1,
-                repetition_penalty=1.2,
+                repetition_penalty=1.15,
                 pad_token_id=self.processor.tokenizer.pad_token_id,
-                eos_token_id=self.processor.tokenizer.eos_token_id,
+                # Let model use its default eos_token_id from config
                 stopping_criteria=stopping_criteria,
             )
         generation_time = time.time() - start_time

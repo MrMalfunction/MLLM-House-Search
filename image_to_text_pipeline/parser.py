@@ -28,18 +28,16 @@ def parse_delimited_output(output_text):
         # Helper function to extract content between delimiters
         def extract_section(text, start_pattern, end_pattern):
             """Extract text between start and end patterns."""
-            # Simple case-insensitive search
-            text_lower = text.lower()
-            start_lower = start_pattern.lower()
-            end_lower = end_pattern.lower()
+            # Use regex for more precise matching with word boundaries
+            start_regex = re.escape(start_pattern)
+            end_regex = re.escape(end_pattern)
 
-            start_idx = text_lower.find(start_lower)
-            if start_idx != -1:
-                start_pos = start_idx + len(start_pattern)
-                # Look for end pattern after start
-                end_idx = text_lower.find(end_lower, start_pos)
-                if end_idx != -1:
-                    return text[start_pos:end_idx].strip()
+            # Match start delimiter followed by content until end delimiter
+            pattern = f"{start_regex}\\s*(.*?)\\s*{end_regex}"
+            match = re.search(pattern, text, re.IGNORECASE | re.DOTALL)
+
+            if match:
+                return match.group(1).strip()
             return ""
 
         # Extract short description
