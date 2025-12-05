@@ -3,6 +3,7 @@ import sys
 from pathlib import Path
 import json
 from PIL import Image
+import pandas as pd
 
 from pinecone import Pinecone
 from sentence_transformers import SentenceTransformer
@@ -11,6 +12,7 @@ from sentence_transformers import SentenceTransformer
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from common import ensure_nltk_resources, preprocess_text
 from app.settings import settings
+from text_to_embedding_pipeline.main import compute_embeddings
 
 # Page configuration
 st.set_page_config(
@@ -122,8 +124,7 @@ def search_pinecone(index, model, query: str, top_k: int = 10, filters=None):
     try:
         # Preprocess and embed the query
         processed_query = preprocess_text(query)
-        query_embedding = model.encode([processed_query])[0].tolist()
-
+        query_embedding = compute_embeddings(pd.Series([processed_query]), model)[0].tolist()
         # Build query parameters
         query_params = {
             "vector": query_embedding,

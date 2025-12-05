@@ -5,7 +5,7 @@ import sys
 import torch
 import numpy as np
 import pandas as pd
-from pinecone import Pinecone, ServerlessSpec  # type: ignore
+from pinecone import Pinecone, ServerlessSpec
 from sentence_transformers import SentenceTransformer
 
 # Add parent directory to path for common package import
@@ -15,7 +15,7 @@ from common import ensure_nltk_resources, preprocess_text
 
 # ---------- Configuration ----------
 
-PINECONE_API_KEY = "PINECONE_API_KEY"  # Replace with your actual Pinecone API key
+PINECONE_API_KEY = "pcsk_7E8HTs_HiEafPqENsAfB5P228ALWecbAELitArRiKkoD1TtxZPvhjAxDL9q2g9U6ReyPWM"  # Replace with your actual Pinecone API key
 MAX_REQUEST_BYTES = 1_900_000  # Pinecone has a 2MB request size limit
 
 
@@ -34,7 +34,7 @@ def add_text_for_embeddings(df: pd.DataFrame) -> pd.DataFrame:
     """Create a text_for_embeddings column by combining relevant fields"""
     missing_cols = [
         col
-        for col in ["house_id", "bedrooms", "bathrooms", "area", "zipcode", "price", "description"]
+        for col in ["house_id", "bedrooms", "bathrooms", "area", "zipcode", "price", "short_description", "frontal_description", "kitchen_description", "bedroom_description", "bathroom_description"]
         if col not in df.columns
     ]
     if missing_cols:
@@ -56,7 +56,15 @@ def add_text_for_embeddings(df: pd.DataFrame) -> pd.DataFrame:
         + "price $"
         + df["price"].astype(str)
         + ". "
-        + df["description"].fillna("")
+        + df['short_description'].fillna('')
+        + ". "
+        + df['frontal_description'].fillna('')
+        + ". "
+        + df['kitchen_description'].fillna('')
+        + ". "
+        + df['bedroom_description'].fillna('')
+        + ". "
+        + df['bathroom_description'].fillna('')
     )
     return df
 
@@ -238,7 +246,11 @@ def update_to_pinecone(
             "area": float(row["area"]),
             "zipcode": str(row["zipcode"]),
             "price": float(row["price"]),
-            "description": row.get("description", "") or "",
+            "short_description": row.get("short_description", "") or "",
+            "frontal_description": row.get("frontal_description", "") or "",
+            "kitchen_description": row.get("kitchen_description", "") or "",
+            "bedroom_description": row.get("bedroom_description", "") or "",
+            "bathroom_description": row.get("bathroom_description", "") or "",
         }
 
         vec = {
@@ -276,7 +288,7 @@ def run_pipeline(
     input_csv: str,
     output_dir: str,
     model_name: str,
-    text_column: str = "text_for_embeddings",
+    text_column: str = "processed_textembeddings",
     pinecone_index: str | None = None,
     pinecone_metric: str = "cosine",
 ):
@@ -351,7 +363,7 @@ def parse_args():
     )
     parser.add_argument(
         "--text_column",
-        default="text_for_embeddings",
+        default="processed_textembeddings",
         help="Which column to embed (text_for_embeddings or processed_textembeddings)",
     )
     parser.add_argument(
