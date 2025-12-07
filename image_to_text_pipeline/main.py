@@ -26,8 +26,8 @@ from config import (
     load_system_prompt,
 )
 from core.generator import HouseDescriptionGenerator
-from parser import parse_delimited_output
 from parquet_to_csv import convert_parquet_to_csv
+from parser import parse_delimited_output
 from pipeline.workers import worker_process
 from pipeline.writer import result_writer_thread
 
@@ -46,9 +46,9 @@ def test_single_house(input_file, model_path, base_path, house_id=None):
         base_path: Base directory for image paths
         house_id: Specific house ID to test (random if None)
     """
-    print(f"\n{'='*60}")
+    print(f"\n{'=' * 60}")
     print("TEST MODE")
-    print(f"{'='*60}\n")
+    print(f"{'=' * 60}\n")
 
     # Load data
     with open(input_file) as f:
@@ -82,14 +82,14 @@ def test_single_house(input_file, model_path, base_path, house_id=None):
     processing_time = time.time() - start_time
 
     if result:
-        print(f"\n{'='*60}")
+        print(f"\n{'=' * 60}")
         print("RAW OUTPUT")
-        print(f"{'='*60}\n")
+        print(f"{'=' * 60}\n")
         print(result["raw_output"])
 
-        print(f"\n{'='*60}")
+        print(f"\n{'=' * 60}")
         print("PARSED OUTPUT")
-        print(f"{'='*60}\n")
+        print(f"{'=' * 60}\n")
 
         parsed = parse_delimited_output(result["raw_output"])
         print(f"Short Description:\n{parsed['short_description']}\n")
@@ -99,7 +99,7 @@ def test_single_house(input_file, model_path, base_path, house_id=None):
         print(f"Bathroom:\n{parsed['bathroom_description'][:200]}...\n")
 
         print(f"\nProcessing time: {processing_time:.2f}s")
-        print(f"{'='*60}\n")
+        print(f"{'=' * 60}\n")
     else:
         print("Error: Processing failed")
 
@@ -219,9 +219,9 @@ def main():
     )
     writer_thread.start()
 
-    print(f"\n{'='*60}")
+    print(f"\n{'=' * 60}")
     print("PROCESSING")
-    print(f"{'='*60}\n")
+    print(f"{'=' * 60}\n")
 
     start_time = datetime.now()
 
@@ -253,10 +253,10 @@ def main():
     total_time = (datetime.now() - start_time).total_seconds()
 
     # Summary
-    print(f"\n{'='*60}")
+    print(f"\n{'=' * 60}")
     print("COMPLETE")
-    print(f"{'='*60}")
-    print(f"Time: {total_time/60:.1f} minutes")
+    print(f"{'=' * 60}")
+    print(f"Time: {total_time / 60:.1f} minutes")
     print(f"Output: {args.output}")
 
     if os.path.exists(args.output):
@@ -265,9 +265,9 @@ def main():
         print(f"Newly processed: {len(df_final) - len(processed_ids)}")
 
         # Convert parquet to CSV
-        print(f"\n{'='*60}")
+        print(f"\n{'=' * 60}")
         print("CONVERTING TO CSV")
-        print(f"{'='*60}\n")
+        print(f"{'=' * 60}\n")
         try:
             csv_output = os.path.splitext(args.output)[0] + ".csv"
             csv_path = convert_parquet_to_csv(args.output, csv_output)

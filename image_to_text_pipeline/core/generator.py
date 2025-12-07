@@ -152,11 +152,11 @@ class HouseDescriptionGenerator:
 
         # Add metadata text
         metadata_str = f"""Property Metadata:
-- Bedrooms: {metadata.get('bedrooms', 'N/A')}
-- Bathrooms: {metadata.get('bathrooms', 'N/A')}
-- Area: {metadata.get('area', 'N/A')}
-- Zipcode: {metadata.get('zipcode', 'N/A')}
-- Price: {metadata.get('price', 'N/A')}
+- Bedrooms: {metadata.get("bedrooms", "N/A")}
+- Bathrooms: {metadata.get("bathrooms", "N/A")}
+- Area: {metadata.get("area", "N/A")}
+- Zipcode: {metadata.get("zipcode", "N/A")}
+- Price: {metadata.get("price", "N/A")}
 
 Analyze the property images and provide the description."""
 

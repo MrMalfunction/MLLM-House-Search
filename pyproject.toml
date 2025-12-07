@@ -57,13 +57,13 @@ dev = [
     "pytest>=7.0.0",
     "pytest-cov>=4.0.0",
     "black>=23.0.0",
-    "isort>=5.12.0",
     "mypy>=1.0.0",
     "ruff>=0.1.0",
+    "pre-commit>=3.0.0",
 ]
 
 [tool.setuptools]
-packages = ["app", "common", "image_to_text_pipeline", "text_to_embedding_pipeline", "batch_jobs"]
+packages = ["app", "common", "image_to_text_pipeline", "text_to_embedding_pipeline"]
 
 [tool.black]
 line-length = 100
@@ -88,7 +88,7 @@ force_grid_wrap = 0
 use_parentheses = true
 ensure_newline_before_comments = true
 skip_gitignore = true
-known_first_party = ["app", "batch_jobs", "common", "image_to_text_pipeline", "text_to_embedding_pipeline", "scripts"]
+known_first_party = ["app","common", "image_to_text_pipeline", "text_to_embedding_pipeline", "scripts"]
 
 [tool.mypy]
 python_version = "3.12"
@@ -118,8 +118,8 @@ pythonpath = ["."]
 [tool.ruff]
 line-length = 100
 target-version = "py312"
-select = ["E", "F", "W", "I", "N", "UP", "B", "A", "C4", "SIM"]
-ignore = ["E501"]
+lint.select = ["E", "F", "W", "I", "N", "UP", "B", "A", "C4", "SIM"]
+lint.ignore = ["E501"]
 exclude = [
     ".venv",
     ".git",
@@ -127,3 +127,6 @@ exclude = [
     "build",
     "dist",
 ]
+
+[tool.ruff.lint.isort]
+known-first-party = ["app", "common", "image_to_text_pipeline", "text_to_embedding_pipeline", "scripts"]
