@@ -469,7 +469,7 @@ wheels = [
 [[package]]
 name = "house-search"
 version = "0.1.0"
-source = { virtual = "." }
+source = { editable = "." }
 dependencies = [
     { name = "nltk" },
     { name = "pillow" },

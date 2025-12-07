@@ -1,29 +1,27 @@
-import streamlit as st
+import json
 import sys
 from pathlib import Path
-import json
+import streamlit as st
 from PIL import Image
-import pandas as pd
-
 from pinecone import Pinecone
 from sentence_transformers import SentenceTransformer
 
 # Add parent directory to path for common package import
 sys.path.insert(0, str(Path(__file__).parent.parent))
-from common import ensure_nltk_resources, preprocess_text
 from app.settings import settings
-from text_to_embedding_pipeline.main import compute_embeddings
+from common import ensure_nltk_resources, preprocess_text
 
 # Page configuration
 st.set_page_config(
     page_title="House Search - Semantic Image Search",
     page_icon="🏠",
     layout="wide",
-    initial_sidebar_state="expanded"
+    initial_sidebar_state="expanded",
 )
 
 # Custom CSS for better styling
-st.markdown("""
+st.markdown(
+    """
     <style>
     .main-header {
         font-size: 2.5rem;
@@ -59,16 +57,18 @@ st.markdown("""
         border-top: 1px solid #E8E8E8;
     }
     </style>
-""", unsafe_allow_html=True)
+""",
+    unsafe_allow_html=True,
+)
 
 # Initialize session state
-if 'model' not in st.session_state:
+if "model" not in st.session_state:
     st.session_state.model = None
-if 'pinecone_index' not in st.session_state:
+if "pinecone_index" not in st.session_state:
     st.session_state.pinecone_index = None
-if 'house_data' not in st.session_state:
+if "house_data" not in st.session_state:
     st.session_state.house_data = None
-if 'search_results' not in st.session_state:
+if "search_results" not in st.session_state:
     st.session_state.search_results = None
 
 
@@ -87,9 +87,11 @@ def connect_to_pinecone(index_name: str):
         pinecone = Pinecone(api_key=api_key)
 
         # Check if index exists
-        index_names = [idx['name'] for idx in pinecone.list_indexes()]
+        index_names = [idx["name"] for idx in pinecone.list_indexes()]
         if index_name not in index_names:
-            st.error(f"Pinecone index '{index_name}' does not exist. Available indexes: {index_names}")
+            st.error(
+                f"Pinecone index '{index_name}' does not exist. Available indexes: {index_names}"
+            )
             return None
 
         return pinecone.Index(index_name)
@@ -109,10 +111,10 @@ def load_house_data():
         json_path = Path(__file__).parent / "data" / "house_image_associations.json"
 
     try:
-        with open(json_path, 'r') as f:
+        with open(json_path) as f:
             data = json.load(f)
         # Create a dictionary keyed by house_id for quick lookup
-        house_dict = {item['house_id']: item for item in data}
+        house_dict = {item["house_id"]: item for item in data}
         return house_dict
     except Exception as e:
         st.error(f"Error loading house data: {e}")
@@ -140,9 +142,7 @@ def search_pinecone(index, model, query: str, top_k: int = 10, filters=None):
         results = index.query(**query_params)
 
         # Convert to dictionary for easier handling
-        return {
-            'matches': results.matches if hasattr(results, 'matches') else []
-        }
+        return {"matches": results.matches if hasattr(results, "matches") else []}
     except Exception as e:
         st.error(f"Error during search: {e}")
         return None
@@ -150,8 +150,8 @@ def search_pinecone(index, model, query: str, top_k: int = 10, filters=None):
 
 def display_house_card(house_info, rank, score, pinecone_metadata=None):
     """Display a single house with its details and images"""
-    metadata = house_info['metadata']
-    images = house_info.get('images', {})
+    metadata = house_info["metadata"]
+    images = house_info.get("images", {})
 
     # Use Pinecone metadata for description if available
     if pinecone_metadata:
@@ -176,10 +176,10 @@ def display_house_card(house_info, rank, score, pinecone_metadata=None):
         with col4:
             st.metric("Area (sqft)", f"{metadata.get('area', 0):,}")
         with col5:
-            st.metric("Zipcode", metadata.get('zipcode', 'N/A'))
+            st.metric("Zipcode", metadata.get("zipcode", "N/A"))
 
         # Display description if available
-        description = metadata.get('description', '')
+        description = metadata.get("description", "")
         if description:
             with st.expander("📝 View Full Description", expanded=False):
                 st.markdown(description)
@@ -189,11 +189,11 @@ def display_house_card(house_info, rank, score, pinecone_metadata=None):
         st.markdown("")  # Add spacing
         img_cols = st.columns(4)
 
-        image_types = ['frontal', 'bedroom', 'bathroom', 'kitchen']
-        image_labels = ['🏡 Frontal View', '🛏️ Bedroom', '🛁 Bathroom', '🍳 Kitchen']
+        image_types = ["frontal", "bedroom", "bathroom", "kitchen"]
+        image_labels = ["🏡 Frontal View", "🛏️ Bedroom", "🛁 Bathroom", "🍳 Kitchen"]
 
-        for idx, (img_type, label) in enumerate(zip(image_types, image_labels)):
-            img_path = images.get(img_type, '')
+        for idx, (img_type, label) in enumerate(zip(image_types, image_labels, strict=False)):
+            img_path = images.get(img_type, "")
             if img_path:
                 # Try parent data directory first (for local development)
                 full_path = Path(__file__).parent.parent / "data" / img_path
@@ -207,7 +207,7 @@ def display_house_card(house_info, rank, score, pinecone_metadata=None):
                         img = Image.open(full_path)
                         with img_cols[idx]:
                             st.image(img, caption=label, use_container_width=True)
-                    except Exception as e:
+                    except Exception:
                         with img_cols[idx]:
                             st.warning(f"{label}\n(Image load error)")
                 else:
@@ -219,8 +219,14 @@ def display_house_card(house_info, rank, score, pinecone_metadata=None):
 
 def main():
     # Header
-    st.markdown('<h1 class="main-header">🏠 House Search - Semantic Image Search</h1>', unsafe_allow_html=True)
-    st.markdown('<p class="subtitle">Search for your dream home using natural language descriptions!</p>', unsafe_allow_html=True)
+    st.markdown(
+        '<h1 class="main-header">🏠 House Search - Semantic Image Search</h1>',
+        unsafe_allow_html=True,
+    )
+    st.markdown(
+        '<p class="subtitle">Search for your dream home using natural language descriptions!</p>',
+        unsafe_allow_html=True,
+    )
 
     # Sidebar configuration
     with st.sidebar:
@@ -232,7 +238,7 @@ def main():
             min_value=1,
             max_value=20,
             value=min(settings.default_top_k, 20),
-            help="Number of houses to retrieve"
+            help="Number of houses to retrieve",
         )
 
         st.markdown("---")
@@ -266,7 +272,9 @@ def main():
             with col1:
                 bathrooms_min = st.number_input("Min Bathrooms", min_value=0.0, value=1.0, step=0.5)
             with col2:
-                bathrooms_max = st.number_input("Max Bathrooms", min_value=0.0, value=10.0, step=0.5)
+                bathrooms_max = st.number_input(
+                    "Max Bathrooms", min_value=0.0, value=10.0, step=0.5
+                )
 
         # Area filter
         area_filter = st.checkbox("Filter by Area (sqft)")
@@ -286,7 +294,8 @@ def main():
 
         st.markdown("---")
         st.markdown("### 💡 Search Tips")
-        st.markdown("""
+        st.markdown(
+            """
         - Be specific about features you want
         - Describe architectural styles
         - Mention desired amenities
@@ -296,7 +305,8 @@ def main():
         - "Cozy ranch style home with fireplace"
         - "Spacious family home in quiet neighborhood"
         - "Contemporary design with open floor plan"
-        """)
+        """
+        )
 
     # Initialize resources
     if st.session_state.model is None:
@@ -326,7 +336,7 @@ def main():
         query = st.text_input(
             "Enter your search query",
             placeholder="e.g., Modern house with large backyard and updated kitchen",
-            label_visibility="collapsed"
+            label_visibility="collapsed",
         )
     with col2:
         search_button = st.button("🔎 Search", type="primary", use_container_width=True)
@@ -355,10 +365,10 @@ def main():
                 st.session_state.model,
                 query,
                 top_k=top_k,
-                filters=filters
+                filters=filters,
             )
 
-            if results and len(results.get('matches', [])) > 0:
+            if results and len(results.get("matches", [])) > 0:
                 st.session_state.search_results = results
                 st.success(f"Found {len(results['matches'])} matching houses!")
             else:
@@ -372,26 +382,31 @@ def main():
                 st.session_state.model,
                 query,
                 top_k=top_k,
-                filters=filters
+                filters=filters,
             )
 
-            if results and len(results.get('matches', [])) > 0:
+            if results and len(results.get("matches", [])) > 0:
                 st.session_state.search_results = results
 
     # Display search results
-    if st.session_state.search_results and len(st.session_state.search_results.get('matches', [])) > 0:
+    if (
+        st.session_state.search_results
+        and len(st.session_state.search_results.get("matches", [])) > 0
+    ):
         st.markdown("---")
         st.markdown("## 🏡 Search Results")
         st.markdown("")  # Add spacing
 
-        matches = st.session_state.search_results['matches']
+        matches = st.session_state.search_results["matches"]
 
         for rank, match in enumerate(matches, 1):
             # Handle both dict and object attribute access
-            match_metadata = match.metadata if hasattr(match, 'metadata') else match.get('metadata', {})
-            match_score = match.score if hasattr(match, 'score') else match.get('score', 0.0)
+            match_metadata = (
+                match.metadata if hasattr(match, "metadata") else match.get("metadata", {})
+            )
+            match_score = match.score if hasattr(match, "score") else match.get("score", 0.0)
 
-            house_id = int(match_metadata.get('house_id', 0))
+            house_id = int(match_metadata.get("house_id", 0))
             score = match_score
 
             # Get full house info from loaded data
@@ -403,18 +418,23 @@ def main():
             else:
                 st.warning(f"House ID {house_id} not found in local data.")
 
-    elif st.session_state.search_results is not None and len(st.session_state.search_results.get('matches', [])) == 0:
+    elif (
+        st.session_state.search_results is not None
+        and len(st.session_state.search_results.get("matches", [])) == 0
+    ):
         st.markdown("---")
         st.info("🔍 No results found. Try a different query or adjust your filters.")
     else:
         # Show welcome message when no search has been performed
         st.markdown("---")
         st.markdown("### 👋 Welcome!")
-        st.markdown("""
+        st.markdown(
+            """
         Start searching for your dream home by entering a **natural language description** above.
 
         Our AI-powered search understands what you're looking for and finds the best matching properties based on semantic similarity.
-        """)
+        """
+        )
 
         # Show some example houses
         st.markdown("### 🌟 Featured Properties")

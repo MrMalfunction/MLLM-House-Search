@@ -3,8 +3,10 @@ Simple script to convert Parquet files to CSV with headers.
 Usage: Run in Python IDLE or from command line with the parquet file path.
 """
 
-import pandas as pd
 import os
+
+import pandas as pd
+
 
 def convert_parquet_to_csv(parquet_file, csv_file=None):
     """
@@ -24,7 +26,7 @@ def convert_parquet_to_csv(parquet_file, csv_file=None):
 
     # Generate output CSV filename if not provided
     if csv_file is None:
-        csv_file = os.path.splitext(parquet_file)[0] + '.csv'
+        csv_file = os.path.splitext(parquet_file)[0] + ".csv"
 
     print(f"Reading Parquet file: {parquet_file}")
 
@@ -36,9 +38,9 @@ def convert_parquet_to_csv(parquet_file, csv_file=None):
 
     # Write to CSV with headers
     print(f"Writing to CSV file: {csv_file}")
-    df.to_csv(csv_file, index=False, encoding='utf-8')
+    df.to_csv(csv_file, index=False, encoding="utf-8")
 
-    print(f"Successfully converted to CSV!")
+    print("Successfully converted to CSV!")
     print(f"Output file: {csv_file}")
 
     return csv_file

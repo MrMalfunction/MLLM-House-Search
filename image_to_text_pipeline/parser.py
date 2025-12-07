@@ -21,7 +21,7 @@ def parse_delimited_output(output_text):
         "frontal_description": "",
         "kitchen_description": "",
         "bedroom_description": "",
-        "bathroom_description": ""
+        "bathroom_description": "",
     }
 
     try:
@@ -45,16 +45,26 @@ def parse_delimited_output(output_text):
         short_desc = extract_section(output_text, "Short Description", "Short Description End")
         if not short_desc:
             # If no delimiters, grab text before first image section
-            first_image = re.search(r"(Frontal|Kitchen|Bedroom|Bathroom)[\s\t]+Image", output_text, re.IGNORECASE)
+            first_image = re.search(
+                r"(Frontal|Kitchen|Bedroom|Bathroom)[\s\t]+Image", output_text, re.IGNORECASE
+            )
             if first_image:
-                short_desc = output_text[:first_image.start()].strip()
+                short_desc = output_text[: first_image.start()].strip()
         result["short_description"] = short_desc
 
         # Extract individual room descriptions
-        result["frontal_description"] = extract_section(output_text, "Frontal Image", "Frontal Image End")
-        result["kitchen_description"] = extract_section(output_text, "Kitchen Image", "Kitchen Image End")
-        result["bedroom_description"] = extract_section(output_text, "Bedroom Image", "Bedroom Image End")
-        result["bathroom_description"] = extract_section(output_text, "Bathroom Image", "Bathroom Image End")
+        result["frontal_description"] = extract_section(
+            output_text, "Frontal Image", "Frontal Image End"
+        )
+        result["kitchen_description"] = extract_section(
+            output_text, "Kitchen Image", "Kitchen Image End"
+        )
+        result["bedroom_description"] = extract_section(
+            output_text, "Bedroom Image", "Bedroom Image End"
+        )
+        result["bathroom_description"] = extract_section(
+            output_text, "Bathroom Image", "Bathroom Image End"
+        )
 
     except Exception as e:
         print(f"[Parser] Warning: Error parsing output: {e}")

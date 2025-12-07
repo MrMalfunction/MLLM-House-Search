@@ -1,17 +1,17 @@
 import argparse
-from pathlib import Path
 import json
 import sys
-import torch
+from pathlib import Path
+
 import numpy as np
 import pandas as pd
-from pinecone import Pinecone, ServerlessSpec
+import torch
+from pinecone import Pinecone, ServerlessSpec  # type: ignore
 from sentence_transformers import SentenceTransformer
 
 # Add parent directory to path for common package import
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from common import ensure_nltk_resources, preprocess_text
-
 
 # ---------- Configuration ----------
 
@@ -20,6 +20,7 @@ MAX_REQUEST_BYTES = 1_900_000  # Pinecone has a 2MB request size limit
 
 
 # ---------- Data Loading & Processing ----------
+
 
 def load_data(csv_path: str) -> pd.DataFrame:
     """Load the CSV data and print basic info"""
@@ -80,10 +81,12 @@ def add_processed_text(df: pd.DataFrame) -> pd.DataFrame:
 
 # ---------- Embedding Generation ----------
 
+
 def load_embedding_model(model_name: str) -> SentenceTransformer:
     """Load the SentenceTransformer model from HuggingFace"""
     model = SentenceTransformer(model_name)
     return model
+
 
 def embed_single_text_with_sliding_window(
     text: str,
@@ -95,35 +98,32 @@ def embed_single_text_with_sliding_window(
     if not isinstance(text, str) or not text.strip():
         embedding_dim = model.get_sentence_embedding_dimension()
         return np.zeros(embedding_dim, dtype=np.float32)
-    
+
     tokenizer = model.tokenizer
-    
+
     try:
         # Tokenize the text
         tokens = tokenizer.encode(text, add_special_tokens=False, truncation=False)
-        
+
         # If text fits within token limit, process directly
         if len(tokens) <= max_tokens:
             with torch.no_grad():
                 embedding = model.encode(text, convert_to_tensor=True, show_progress_bar=False)
                 return embedding.cpu().numpy().astype(np.float32)
-        
+
         # Text is too long - use sliding window approach
         slices = []
         for i in range(0, len(tokens), stride):
             slice_tokens = tokens[i : i + max_tokens]
             slice_text = tokenizer.decode(slice_tokens, skip_special_tokens=True)
             slices.append(slice_text)
-        
+
         # Encode all slices
         with torch.no_grad():
             slice_embeddings = model.encode(
-                slices,
-                convert_to_tensor=True,
-                show_progress_bar=False,
-                batch_size=8
+                slices, convert_to_tensor=True, show_progress_bar=False, batch_size=8
             )
-        
+
         # Pool embeddings from all slices
         if pool == "mean":
             final_embedding = slice_embeddings.mean(dim=0)
@@ -131,9 +131,9 @@ def embed_single_text_with_sliding_window(
             final_embedding = slice_embeddings.max(dim=0).values
         else:
             raise ValueError(f"Invalid pool method: {pool}. Use 'mean' or 'max'.")
-        
+
         return final_embedding.cpu().numpy().astype(np.float32)
-    
+
     except Exception as e:
         print(f"Warning: Error embedding text: {str(e)}")
         embedding_dim = model.get_sentence_embedding_dimension()
@@ -155,7 +155,7 @@ def compute_embeddings(
     n_long = sum(1 for length in token_lengths if length > max_tokens)
     print(f"Number of texts longer than {max_tokens} tokens: {n_long}/{len(texts_list)}")
     embeddings = []
-    for idx, text in enumerate(texts_list):
+    for _idx, text in enumerate(texts_list):
         embedding = embed_single_text_with_sliding_window(
             text=text,
             model=model,
@@ -186,24 +186,29 @@ def save_outputs(
 
     print(f"Saved processed CSV to: {csv_path}")
     print(f"Saved embeddings to: {npy_path}")
+
+
 # ---------- Pinecone Integration ----------
+
 
 def pinecone_index_get(index_name: str, dimension: int, metric: str):
     """Initialize or get existing Pinecone index"""
     api_key_pinecone = PINECONE_API_KEY
 
     if not api_key_pinecone:
-        raise ValueError("Pinecone API key is not set. Please set the PINECONE_API_KEY variable before using Pinecone services.")
+        raise ValueError(
+            "Pinecone API key is not set. Please set the PINECONE_API_KEY variable before using Pinecone services."
+        )
 
     pinecone = Pinecone(api_key=api_key_pinecone)
 
-    if index_name not in [idx['name'] for idx in pinecone.list_indexes()]:
+    if index_name not in [idx["name"] for idx in pinecone.list_indexes()]:
         print(f"Creating new Pinecone index: {index_name}")
         pinecone.create_index(
             name=index_name,
             dimension=dimension,
             metric=metric,
-            spec=ServerlessSpec(cloud="aws", region="us-east-1")
+            spec=ServerlessSpec(cloud="aws", region="us-east-1"),
         )
     else:
         print(f"Using existing Pinecone index: {index_name}")
@@ -217,7 +222,7 @@ def update_to_pinecone(
     df: pd.DataFrame,
     embeddings: np.ndarray,
     column_id: str = "house_id",
-    batch_size: int = 100
+    batch_size: int = 100,
 ):
     """Upload embeddings with metadata to Pinecone index"""
     if len(df) != embeddings.shape[0]:
@@ -282,7 +287,10 @@ def update_to_pinecone(
     # Flush any remaining vectors
     flush_batch()
     print(f"Total vectors upserted: {total_upserted}")
+
+
 # ---------- Main Pipeline ----------
+
 
 def run_pipeline(
     input_csv: str,
@@ -318,7 +326,9 @@ def run_pipeline(
     # Step 5: Compute embeddings
     print(f"\n[5/6] Computing embeddings for column: {text_column}...")
     texts_to_embed: pd.Series = df[text_column]  # type: ignore
-    embeddings = compute_embeddings(texts_to_embed, model=model, max_tokens=256, stride=128, pool="mean")
+    embeddings = compute_embeddings(
+        texts_to_embed, model=model, max_tokens=256, stride=128, pool="mean"
+    )
     print(f"Generated embeddings with shape: {embeddings.shape}")
 
     # Step 6: Save outputs
@@ -341,6 +351,7 @@ def run_pipeline(
 
 
 # ---------- CLI ----------
+
 
 def parse_args():
     parser = argparse.ArgumentParser(

@@ -1,23 +1,23 @@
 import re
+
 import nltk
 from nltk.corpus import stopwords
 from nltk.stem import PorterStemmer
-
 
 # ---------- Configuration ----------
 
 HTML_TAG_REGEX = re.compile(r"<[^>]+>")
 EMOJI_PATTERN = re.compile(
     "["
-    "\U0001F600-\U0001F64F"
-    "\U0001F300-\U0001F5FF"
-    "\U0001F680-\U0001F6FF"
-    "\U0001F1E0-\U0001F1FF"
-    "\U00002702-\U000027B0"
-    "\U000024C2-\U0001F251"
-    "\U0001FA70-\U0001FAFF"
-    "\U00002600-\U000026FF"
-    "\U00002B50"
+    "\U0001f600-\U0001f64f"
+    "\U0001f300-\U0001f5ff"
+    "\U0001f680-\U0001f6ff"
+    "\U0001f1e0-\U0001f1ff"
+    "\U00002702-\U000027b0"
+    "\U000024c2-\U0001f251"
+    "\U0001fa70-\U0001faff"
+    "\U00002600-\U000026ff"
+    "\U00002b50"
     "]+",
     flags=re.UNICODE,
 )
@@ -30,6 +30,7 @@ STEMMER = PorterStemmer()
 
 # ---------- NLTK Setup ----------
 
+
 def ensure_nltk_resources():
     """Check if NLTK stopwords are downloaded; if not, download them"""
     global STOP_WORDS
@@ -41,6 +42,7 @@ def ensure_nltk_resources():
 
 
 # ---------- Text Preprocessing ----------
+
 
 def preprocess_text(text: str) -> str:
     """Clean and preprocess text for embedding generation"""

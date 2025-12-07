@@ -8,7 +8,7 @@ The application performs cloud-based semantic search against a Pinecone vector d
 
 ## Prerequisites
 
-- Python 3.8+
+- Python 3.12+
 - Pinecone API key
 - Required packages (install via `pip install -r requirements.txt`):
   - sentence-transformers

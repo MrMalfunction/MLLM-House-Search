@@ -7,11 +7,11 @@ from sentence_transformers import SentenceTransformer
 
 # Add parent directory to path for common package import
 sys.path.insert(0, str(Path(__file__).parent.parent))
-from common import ensure_nltk_resources, preprocess_text
 from app.settings import settings
-
+from common import ensure_nltk_resources, preprocess_text
 
 # ---------- Pinecone Search ----------
+
 
 def search_pinecone(index, model: SentenceTransformer, query: str, top_k: int = 10):
     """Search for houses in Pinecone using semantic similarity"""
@@ -36,7 +36,9 @@ def search_pinecone(index, model: SentenceTransformer, query: str, top_k: int = 
         md = match["metadata"]
         score = match["score"]
         print(f"\n#{rank}: House ID {md['house_id']} | Similarity Score: {score:.4f}")
-        print(f"   Bedrooms: {md['bedrooms']} | Bathrooms: {md['bathrooms']} | Area: {md['area']} sqft")
+        print(
+            f"   Bedrooms: {md['bedrooms']} | Bathrooms: {md['bathrooms']} | Area: {md['area']} sqft"
+        )
         print(f"   Zipcode: {md['zipcode']}")
         print(f"   Price: ${md['price']:,.2f}")
         print(f"   Description: {md.get('description', 'No description available')[:200]}...")
@@ -44,6 +46,7 @@ def search_pinecone(index, model: SentenceTransformer, query: str, top_k: int = 
 
 
 # ---------- Initialization ----------
+
 
 def load_model(model_name: str) -> SentenceTransformer:
     """Load the SentenceTransformer model"""
@@ -57,14 +60,18 @@ def connect_to_pinecone(index_name: str):
     api_key = settings.pinecone_api_key
 
     if not api_key:
-        raise ValueError("Pinecone API key is not set. Please set the PINECONE_API_KEY environment variable.")
+        raise ValueError(
+            "Pinecone API key is not set. Please set the PINECONE_API_KEY environment variable."
+        )
 
     pinecone = Pinecone(api_key=api_key)
 
     # Check if index exists
-    index_names = [idx['name'] for idx in pinecone.list_indexes()]
+    index_names = [idx["name"] for idx in pinecone.list_indexes()]
     if index_name not in index_names:
-        raise ValueError(f"Pinecone index '{index_name}' does not exist. Available indexes: {index_names}")
+        raise ValueError(
+            f"Pinecone index '{index_name}' does not exist. Available indexes: {index_names}"
+        )
 
     print(f"Connected to Pinecone index: {index_name}")
     return pinecone.Index(index_name)
@@ -72,11 +79,8 @@ def connect_to_pinecone(index_name: str):
 
 # ---------- Interactive Search ----------
 
-def interactive_search(
-    model: SentenceTransformer,
-    pinecone_index,
-    top_k: int = 10
-):
+
+def interactive_search(model: SentenceTransformer, pinecone_index, top_k: int = 10):
     """Interactive search loop for house queries"""
     print("\n" + "=" * 80)
     print("HOUSE SEMANTIC SEARCH - PINECONE")
@@ -90,7 +94,7 @@ def interactive_search(
         try:
             query = input("Enter your search query: ").strip()
 
-            if query.lower() in ['exit', 'quit', 'q']:
+            if query.lower() in ["exit", "quit", "q"]:
                 print("\nThank you for using House Semantic Search. Goodbye!")
                 break
 
@@ -111,6 +115,7 @@ def interactive_search(
 
 
 # ---------- CLI ----------
+
 
 def parse_args():
     parser = argparse.ArgumentParser(
@@ -167,11 +172,7 @@ def main():
         search_pinecone(pinecone_index, model, args.query, top_k=args.top_k)
     else:
         # Interactive mode
-        interactive_search(
-            model=model,
-            pinecone_index=pinecone_index,
-            top_k=args.top_k
-        )
+        interactive_search(model=model, pinecone_index=pinecone_index, top_k=args.top_k)
 
 
 if __name__ == "__main__":
