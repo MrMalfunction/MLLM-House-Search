@@ -1,23 +1,67 @@
-# House Image Association Pipeline
+# MLLM House Search
 
-A Python pipeline to associate each house with its respective images from the [Houses Dataset](https://github.com/emanhamed/Houses-dataset/tree/master/Houses%20Dataset).
+A semantic search system for real estate properties using vision-language models. This project enables natural language-based house discovery through automated image analysis and vector embeddings.
 
 ## Overview
 
-This pipeline processes the Houses dataset which contains:
-- **535 houses** with metadata (bedrooms, bathrooms, area, zipcode, price)
-- **2,140 images** (4 images per house: bathroom, bedroom, kitchen, frontal view)
+The system processes house images and metadata through a three-stage pipeline:
 
-The pipeline associates each house with its corresponding images and outputs a structured JSON file.
+1. **Image-to-Text Pipeline**: Generates descriptions from house images using Qwen-VL vision-language models
+2. **Text-to-Embedding Pipeline**: Converts descriptions to semantic embeddings using sentence-transformers
+3. **Search Application**: Provides semantic search capabilities via Pinecone vector database
 
-## Dataset Structure
+Users query the system using natural language, retrieving the most semantically similar properties.
 
-The dataset should be organized as follows:
+## Requirements
+
+- Python 3.12+
+- Pinecone API key (https://www.pinecone.io)
+- NVIDIA GPU with CUDA (recommended for image processing)
+- 50GB+ disk space
+- 16GB+ RAM
+
+## Installation
+
+### Clone Repository
+
+```bash
+git clone https://github.com/MrMalfunction/MLLM-House-Search.git
+cd MLLM-House-Search
+```
+
+### Install Dependencies
+
+**Using UV (recommended):**
+
+```bash
+uv sync
+```
+
+**Using pip:**
+
+```bash
+pip install -e .
+```
+
+### Configuration
+
+Create a `.env` file in the project root:
+
+```env
+PINECONE_API_KEY=your_api_key
+PINECONE_INDEX=house-embeddings
+```
+
+Retrieve your API key from https://app.pinecone.io.
+
+## Data Format
+
+The dataset must follow this structure:
 
 ```
 Houses Dataset/
-├── HousesInfo.txt          # Metadata file (one line per house)
-├── 1_bathroom.jpg          # Images named as: {house_id}_{room_type}.jpg
+├── HousesInfo.txt
+├── 1_bathroom.jpg
 ├── 1_bedroom.jpg
 ├── 1_kitchen.jpg
 ├── 1_frontal.jpg
@@ -25,143 +69,164 @@ Houses Dataset/
 └── ...
 ```
 
-### Metadata Format
+### Metadata File
 
-Each line in `HousesInfo.txt` contains:
+`HousesInfo.txt` contains one house per line with space-separated values:
+
 ```
 bedrooms bathrooms area zipcode price
+4 2 3000 85255 550000
+3 1.5 2000 85256 400000
 ```
 
-Example:
-```
-4 4 4053 85255 869500
-```
-
-### Image Naming Convention
+### Image Naming
 
 Images are named as: `{house_id}_{room_type}.jpg`
 
-Where:
-- `house_id`: House identifier (1-535)
-- `room_type`: One of `bathroom`, `bedroom`, `kitchen`, `frontal`
-
-## Installation
-
-No external dependencies required! The pipeline uses only Python standard library.
-
-```bash
-# Python 3.7+ required (for dataclasses support)
-python3 --version
-```
+Room types: `bathroom`, `bedroom`, `kitchen`, `frontal`
 
 ## Usage
 
-### Basic Usage
+### Step 1: Generate Image Descriptions
 
 ```bash
-python3 house_image_pipeline.py --dataset-path "path/to/Houses Dataset" --output output.json
+python image_to_text_pipeline/main.py \
+    --dataset-path "path/to/Houses Dataset" \
+    --output descriptions.json
 ```
 
-### With Statistics
+Generates text descriptions from house images using Qwen-VL.
+
+### Step 2: Create Embeddings
 
 ```bash
-python3 house_image_pipeline.py \
-    --dataset-path "Houses-dataset/Houses Dataset" \
-    --output house_image_associations.json \
-    --stats
+python text_to_embedding_pipeline/main.py \
+    --input descriptions.json \
+    --output embeddings.json
 ```
 
-### Command Line Arguments
+Converts descriptions to embeddings and uploads to Pinecone.
 
-- `--dataset-path`: Path to the 'Houses Dataset' directory (default: `Houses-dataset/Houses Dataset`)
-- `--output`: Output JSON file path (default: `house_image_associations.json`)
-- `--stats`: Print statistics about the dataset
+### Step 3: Search Houses
 
-## Output Format
+**Interactive mode:**
 
-The pipeline generates a JSON file with the following structure:
-
-```json
-[
-  {
-    "house_id": 1,
-    "metadata": {
-      "house_id": 1,
-      "bedrooms": 4.0,
-      "bathrooms": 4.0,
-      "area": 4053,
-      "zipcode": 85255,
-      "price": 869500
-    },
-    "images": {
-      "bathroom": "path/to/1_bathroom.jpg",
-      "bedroom": "path/to/1_bedroom.jpg",
-      "kitchen": "path/to/1_kitchen.jpg",
-      "frontal": "path/to/1_frontal.jpg"
-    }
-  },
-  ...
-]
+```bash
+python app/main.py --pinecone_index house-embeddings
 ```
 
-## Programmatic Usage
+**Single query:**
 
-You can also use the pipeline programmatically:
-
-```python
-from house_image_pipeline import HouseImagePipeline
-
-# Initialize pipeline
-pipeline = HouseImagePipeline("path/to/Houses Dataset")
-
-# Associate houses with images
-houses = pipeline.associate_houses_with_images()
-
-# Save to JSON
-pipeline.save_to_json(houses, "output.json")
-
-# Get statistics
-stats = pipeline.get_statistics(houses)
-print(stats)
+```bash
+python app/main.py --pinecone_index house-embeddings --query "3 bedroom house with modern kitchen"
 ```
 
-## Example Output
+**Web interface (optional):**
 
-When run with `--stats`, the pipeline prints:
-
-```
-Reading metadata...
-Found metadata for 535 houses
-Scanning images...
-Found images for 535 houses
-Associating houses with images...
-Successfully associated 535 houses with their images
-Saved associations to house_image_associations.json
-
-=== Dataset Statistics ===
-total_houses: 535
-houses_with_all_images: 535
-houses_with_some_images: 535
-houses_with_no_images: 0
-image_counts_by_type: {'bathroom': 535, 'bedroom': 535, 'kitchen': 535, 'frontal': 535}
-total_images: 2140
+```bash
+streamlit run app/streamlit_app.py
 ```
 
-## Features
+## Project Structure
 
-- ✅ Automatically parses image filenames to extract house ID and room type
-- ✅ Reads and parses metadata from HousesInfo.txt
-- ✅ Associates each house with its 4 images
-- ✅ Handles missing images gracefully
-- ✅ Generates structured JSON output
-- ✅ Provides statistics about the dataset
-- ✅ No external dependencies
+```
+MLLM-House-Search/
+├── image_to_text_pipeline/      # Image analysis pipeline
+│   ├── main.py
+│   └── core/
+├── text_to_embedding_pipeline/  # Embedding generation
+│   ├── main.py
+│   └── examples/
+├── app/                         # Search application
+│   ├── main.py
+│   ├── streamlit_app.py
+│   └── settings/
+├── common/                      # Shared utilities
+├── batch_jobs/                  # Batch processing
+├── house_image_pipeline.py      # Image association
+├── pyproject.toml               # Dependencies
+├── .pre-commit-config.yaml      # Code quality
+└── .env                         # Configuration
+```
 
-## Dataset Source
+## Architecture
 
-The dataset is available at: https://github.com/emanhamed/Houses-dataset/tree/master/Houses%20Dataset
+### Image-to-Text Pipeline
+
+Processes house images using Qwen-VL to generate room-specific descriptions.
+
+**Input**: House images (bathroom, bedroom, kitchen, frontal)
+**Output**: JSON file with text descriptions
+
+### Text-to-Embedding Pipeline
+
+Converts descriptions to semantic embeddings using sentence-transformers.
+
+**Input**: Descriptions from image-to-text pipeline
+**Output**: Embeddings uploaded to Pinecone index
+
+### Search Application
+
+Retrieves semantically similar houses from the Pinecone index.
+
+**Input**: Natural language query
+**Output**: Ranked list of matching properties
+
+## Development
+
+### Install Development Tools
+
+```bash
+pip install -e ".[dev]"
+pre-commit install
+```
+
+### Run Tests
+
+```bash
+pytest
+```
+
+### Code Quality
+
+Automatic checks on commit:
+
+```bash
+pre-commit run --all-files
+```
+
+## Dependencies
+
+### Core
+
+- `sentence-transformers`: Embedding generation
+- `pinecone`: Vector database
+- `python-dotenv`: Environment configuration
+- `Pillow`: Image processing
+
+### Pipeline
+
+- `torch`, `torchvision`: Deep learning framework
+- `transformers`: Vision-language models
+- `qwen-vl-utils`: Model utilities
+- `pandas`, `pyarrow`: Data processing
+
+### Development
+
+- `pytest`: Testing
+- `ruff`: Linting
+- `black`: Code formatting
+- `pre-commit`: Git hooks
+
+## Dataset
+
+Designed for the [Houses Dataset](https://github.com/emanhamed/Houses-dataset):
+- 535 houses
+- 2,140 images (4 per house)
+- Metadata: bedrooms, bathrooms, area, zipcode, price
 
 ## License
 
-This pipeline is provided as-is. Please refer to the original dataset repository for dataset licensing information.
+This project is licensed under the MIT License. See LICENSE file for details.
 
+The Houses Dataset used in this project is subject to its own licensing terms. Refer to the [Houses Dataset repository](https://github.com/emanhamed/Houses-dataset) for licensing information.
