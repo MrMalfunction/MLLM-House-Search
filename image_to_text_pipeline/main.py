@@ -27,6 +27,7 @@ from config import (
 )
 from core.generator import HouseDescriptionGenerator
 from parser import parse_delimited_output
+from parquet_to_csv import convert_parquet_to_csv
 from pipeline.workers import worker_process
 from pipeline.writer import result_writer_thread
 
@@ -262,6 +263,17 @@ def main():
         df_final = pd.read_parquet(args.output)
         print(f"Total records: {len(df_final)}")
         print(f"Newly processed: {len(df_final) - len(processed_ids)}")
+
+        # Convert parquet to CSV
+        print(f"\n{'='*60}")
+        print("CONVERTING TO CSV")
+        print(f"{'='*60}\n")
+        try:
+            csv_output = os.path.splitext(args.output)[0] + ".csv"
+            csv_path = convert_parquet_to_csv(args.output, csv_output)
+            print(f"CSV file created: {csv_path}")
+        except Exception as e:
+            print(f"Error converting to CSV: {e}")
 
 
 if __name__ == "__main__":

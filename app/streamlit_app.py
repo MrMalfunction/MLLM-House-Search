@@ -1,15 +1,15 @@
 import json
-import sys
 from pathlib import Path
+
+import pandas as pd
 import streamlit as st
 from PIL import Image
 from pinecone import Pinecone
 from sentence_transformers import SentenceTransformer
 
-# Add parent directory to path for common package import
-sys.path.insert(0, str(Path(__file__).parent.parent))
 from app.settings import settings
 from common import ensure_nltk_resources, preprocess_text
+from text_to_embedding_pipeline.main import compute_embeddings
 
 # Page configuration
 st.set_page_config(

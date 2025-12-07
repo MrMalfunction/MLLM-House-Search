@@ -1,3 +1,7 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
 [project]
 name = "house-search"
 version = "0.1.0"
@@ -57,6 +61,9 @@ dev = [
     "mypy>=1.0.0",
     "ruff>=0.1.0",
 ]
+
+[tool.setuptools]
+packages = ["app", "common", "image_to_text_pipeline", "text_to_embedding_pipeline", "batch_jobs"]
 
 [tool.black]
 line-length = 100

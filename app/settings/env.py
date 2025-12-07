@@ -1,17 +1,20 @@
+"""
+Application settings configuration loaded from environment variables.
+Handles configuration for Pinecone, models, and search parameters.
+"""
+
 import os
 from dataclasses import dataclass
-from pathlib import Path
 
 from dotenv import load_dotenv
 
-# Load environment variables from .env file
-env_path = Path(__file__).parent.parent.parent / ".env"
-load_dotenv(dotenv_path=env_path)
+# Load environment variables from .env file in project root
+load_dotenv()
 
 
 @dataclass
 class Settings:
-    """Application settings loaded from environment variables"""
+    """Application settings loaded from environment variables."""
 
     # Pinecone Configuration
     pinecone_api_key: str
@@ -25,12 +28,16 @@ class Settings:
 
     @classmethod
     def from_env(cls) -> "Settings":
-        """Load settings from environment variables"""
+        """Load settings from environment variables.
+
+        Raises:
+            ValueError: If required environment variables are not set.
+        """
         pinecone_api_key = os.getenv("PINECONE_API_KEY")
         if not pinecone_api_key:
             raise ValueError(
                 "PINECONE_API_KEY environment variable is not set. "
-                "Please set it before running the application."
+                "Please set it in your .env file or environment."
             )
 
         pinecone_index_name = os.getenv("PINECONE_INDEX_NAME", "house-image-search")

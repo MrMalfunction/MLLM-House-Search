@@ -1,6 +1,5 @@
 import argparse
 import json
-import sys
 from pathlib import Path
 
 import numpy as np
@@ -9,13 +8,11 @@ import torch
 from pinecone import Pinecone, ServerlessSpec  # type: ignore
 from sentence_transformers import SentenceTransformer
 
-# Add parent directory to path for common package import
-sys.path.insert(0, str(Path(__file__).parent.parent))
 from common import ensure_nltk_resources, preprocess_text
 
 # ---------- Configuration ----------
 
-PINECONE_API_KEY = "pcsk_7E8HTs_HiEafPqENsAfB5P228ALWecbAELitArRiKkoD1TtxZPvhjAxDL9q2g9U6ReyPWM"  # Replace with your actual Pinecone API key
+PINECONE_API_KEY = ""  # Replace with your actual Pinecone API key
 MAX_REQUEST_BYTES = 1_900_000  # Pinecone has a 2MB request size limit
 
 
@@ -35,7 +32,19 @@ def add_text_for_embeddings(df: pd.DataFrame) -> pd.DataFrame:
     """Create a text_for_embeddings column by combining relevant fields"""
     missing_cols = [
         col
-        for col in ["house_id", "bedrooms", "bathrooms", "area", "zipcode", "price", "short_description", "frontal_description", "kitchen_description", "bedroom_description", "bathroom_description"]
+        for col in [
+            "house_id",
+            "bedrooms",
+            "bathrooms",
+            "area",
+            "zipcode",
+            "price",
+            "short_description",
+            "frontal_description",
+            "kitchen_description",
+            "bedroom_description",
+            "bathroom_description",
+        ]
         if col not in df.columns
     ]
     if missing_cols:
@@ -57,15 +66,15 @@ def add_text_for_embeddings(df: pd.DataFrame) -> pd.DataFrame:
         + "price $"
         + df["price"].astype(str)
         + ". "
-        + df['short_description'].fillna('')
+        + df["short_description"].fillna("")
         + ". "
-        + df['frontal_description'].fillna('')
+        + df["frontal_description"].fillna("")
         + ". "
-        + df['kitchen_description'].fillna('')
+        + df["kitchen_description"].fillna("")
         + ". "
-        + df['bedroom_description'].fillna('')
+        + df["bedroom_description"].fillna("")
         + ". "
-        + df['bathroom_description'].fillna('')
+        + df["bathroom_description"].fillna("")
     )
     return df
 
@@ -97,6 +106,8 @@ def embed_single_text_with_sliding_window(
 ) -> np.ndarray:
     if not isinstance(text, str) or not text.strip():
         embedding_dim = model.get_sentence_embedding_dimension()
+        if embedding_dim is None:
+            embedding_dim = 768  # Default embedding dimension
         return np.zeros(embedding_dim, dtype=np.float32)
 
     tokenizer = model.tokenizer
@@ -137,6 +148,8 @@ def embed_single_text_with_sliding_window(
     except Exception as e:
         print(f"Warning: Error embedding text: {str(e)}")
         embedding_dim = model.get_sentence_embedding_dimension()
+        if embedding_dim is None:
+            embedding_dim = 768  # Default embedding dimension
         return np.zeros(embedding_dim, dtype=np.float32)
 
 

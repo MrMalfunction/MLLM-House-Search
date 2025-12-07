@@ -1,8 +1,9 @@
 """
 Simple script to convert Parquet files to CSV with headers.
-Usage: Run in Python IDLE or from command line with the parquet file path.
+Usage: python -m image_to_text_pipeline.parquet_to_csv <parquet_file> [--output output.csv]
 """
 
+import argparse
 import os
 
 import pandas as pd
@@ -46,18 +47,28 @@ def convert_parquet_to_csv(parquet_file, csv_file=None):
     return csv_file
 
 
-# For running in Python IDLE
-if __name__ == "__main__":
-    # EDIT THIS: Put your parquet file path here
-    parquet_file_path = "your_file.parquet"
+def main():
+    """Main entry point for command-line usage."""
+    parser = argparse.ArgumentParser(description="Convert Parquet files to CSV format with headers")
+    parser.add_argument("parquet_file", help="Path to the input Parquet file")
+    parser.add_argument(
+        "--output", "-o", default=None, help="Path to the output CSV file (optional)"
+    )
 
-    # Optional: specify output CSV path (leave as None to auto-generate)
-    output_csv_path = None
+    args = parser.parse_args()
 
     try:
-        convert_parquet_to_csv(parquet_file_path, output_csv_path)
+        csv_path = convert_parquet_to_csv(args.parquet_file, args.output)
+        print(f"\n✅ Conversion successful: {csv_path}")
     except Exception as e:
-        print(f"Error: {e}")
+        print(f"❌ Error: {e}")
         print("\nMake sure to:")
-        print("1. Edit 'parquet_file_path' variable with your actual file path")
-        print("2. Install pandas with: pip install pandas pyarrow")
+        print("1. Provide a valid parquet file path")
+        print("2. Have pandas and pyarrow installed: pip install pandas pyarrow")
+        return 1
+
+    return 0
+
+
+if __name__ == "__main__":
+    exit(main())
