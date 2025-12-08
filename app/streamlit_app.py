@@ -292,7 +292,7 @@ def main():
             zipcode = st.text_input("Zipcode", placeholder="e.g., 85255")
 
         st.markdown("---")
-        st.markdown("###Search Tips")
+        st.markdown("### Search Tips")
         st.markdown(
             """
         - Be specific about features you want
