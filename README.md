@@ -1,232 +1,233 @@
-# MLLM House Search
+# 🏠 MLLM House Search
 
-A semantic search system for real estate properties using vision-language models. This project enables natural language-based house discovery through automated image analysis and vector embeddings.
+A semantic search system for real estate properties using vision-language models and embeddings.
 
-## Overview
+**[Try the Live Demo →](https://29-house-search.streamlit.app/)**
 
-The system processes house images and metadata through a three-stage pipeline:
+## What is this?
 
-1. **Image-to-Text Pipeline**: Generates descriptions from house images using Qwen-VL vision-language models
-2. **Text-to-Embedding Pipeline**: Converts descriptions to semantic embeddings using sentence-transformers
-3. **Search Application**: Provides semantic search capabilities via Pinecone vector database
+Search for houses using natural language. Instead of filtering by price ranges and bedroom counts, describe what you want: *"Modern 3-bedroom house with a large kitchen and backyard"* — and get semantically similar properties ranked by relevance.
 
-Users query the system using natural language, retrieving the most semantically similar properties.
+This project demonstrates how to build a semantic search system by:
+1. Converting house images to descriptions using Qwen-VL
+2. Creating semantic embeddings with Sentence Transformers
+3. Searching via Pinecone vector database
 
-## Requirements
+## Features
 
-- Python 3.12+
-- Pinecone API key (https://www.pinecone.io)
-- NVIDIA GPU with CUDA (recommended for image processing)
-- 50GB+ disk space
-- 16GB+ RAM
+✨ **Natural language search** — Describe what you want in plain English  
+🖼️ **Vision-language model** — Understands house images, not just metadata  
+⚡ **Fast semantic search** — Vector embeddings for instant results  
+🌐 **Web interface** — Clean Streamlit app for easy exploration  
+📊 **535+ properties** — 2,140 images in the dataset  
 
-## Installation
+## Quick Start
 
-### Clone Repository
+### Use the Web App (Easiest)
 
+Visit [29-house-search.streamlit.app](https://29-house-search.streamlit.app/) and start searching immediately.
+
+### Run Locally
+
+**1. Clone & Setup**
 ```bash
 git clone https://github.com/MrMalfunction/MLLM-House-Search.git
 cd MLLM-House-Search
-```
-
-### Install Dependencies
-
-**Using UV (recommended):**
-
-```bash
-uv sync
-```
-
-**Using pip:**
-
-```bash
 pip install -e .
 ```
 
-### Configuration
-
-Create a `.env` file in the project root:
-
-```env
-PINECONE_API_KEY=your_api_key
-PINECONE_INDEX=house-embeddings
-```
-
-Retrieve your API key from https://app.pinecone.io.
-
-## Data Format
-
-The dataset must follow this structure:
-
-```
-Houses Dataset/
-├── HousesInfo.txt
-├── 1_bathroom.jpg
-├── 1_bedroom.jpg
-├── 1_kitchen.jpg
-├── 1_frontal.jpg
-├── 2_bathroom.jpg
-└── ...
-```
-
-### Metadata File
-
-`HousesInfo.txt` contains one house per line with space-separated values:
-
-```
-bedrooms bathrooms area zipcode price
-4 2 3000 85255 550000
-3 1.5 2000 85256 400000
-```
-
-### Image Naming
-
-Images are named as: `{house_id}_{room_type}.jpg`
-
-Room types: `bathroom`, `bedroom`, `kitchen`, `frontal`
-
-## Usage
-
-### Step 1: Generate Image Descriptions
-
+**2. Configure**
 ```bash
-python image_to_text_pipeline/main.py \
-    --dataset-path "path/to/Houses Dataset" \
-    --output descriptions.json
+# Create .env file
+echo "PINECONE_API_KEY=your_key_here" > .env
+echo "PINECONE_INDEX=house-embeddings" >> .env
 ```
 
-Generates text descriptions from house images using Qwen-VL.
+Get a free Pinecone API key from [pinecone.io](https://www.pinecone.io)
 
-### Step 2: Create Embeddings
-
+**3. Search**
 ```bash
-python text_to_embedding_pipeline/main.py \
-    --input descriptions.json \
-    --output embeddings.json
-```
+# Web interface
+streamlit run app/streamlit_app.py
 
-Converts descriptions to embeddings and uploads to Pinecone.
-
-### Step 3: Search Houses
-
-**Interactive mode:**
-
-```bash
+# Or interactive CLI
 python app/main.py --pinecone_index house-embeddings
 ```
 
-**Single query:**
+## How It Works
 
-```bash
-python app/main.py --pinecone_index house-embeddings --query "3 bedroom house with modern kitchen"
+```
+House Images
+    ↓
+[Qwen-VL] → Generate descriptions
+    ↓
+[Sentence-Transformers] → Create embeddings
+    ↓
+[Pinecone] → Store vectors
+    ↓
+User Query → Embed → Search → Results
 ```
 
-**Web interface (optional):**
+### The Pipeline
 
-```bash
-streamlit run app/streamlit_app.py
-```
+1. **Image-to-Text**: Qwen-VL analyzes 4 images per house (bathroom, bedroom, kitchen, frontal) and generates descriptions
+2. **Embeddings**: Sentences are converted to 384-dimensional vectors using all-MiniLM-L6-v2
+3. **Vector DB**: Embeddings + metadata stored in Pinecone for fast similarity search
+4. **Search**: User queries are embedded and matched against stored vectors
 
 ## Project Structure
 
 ```
-MLLM-House-Search/
-├── image_to_text_pipeline/      # Image analysis pipeline
-│   ├── main.py
-│   └── core/
-├── text_to_embedding_pipeline/  # Embedding generation
-│   ├── main.py
-│   └── examples/
-├── app/                         # Search application
-│   ├── main.py
-│   ├── streamlit_app.py
-│   └── settings/
-├── common/                      # Shared utilities
-├── batch_jobs/                  # Batch processing
-├── house_image_pipeline.py      # Image association
-├── pyproject.toml               # Dependencies
-├── .pre-commit-config.yaml      # Code quality
-└── .env                         # Configuration
+├── app/                              # Search application
+│   ├── main.py                       # CLI interface
+│   ├── streamlit_app.py              # Web app
+│   └── settings/                     # Configuration
+├── image_to_text_pipeline/           # Convert images → descriptions
+├── text_to_embedding_pipeline/       # Convert text → embeddings
+├── common/                           # Shared utilities
+├── house_image_pipeline.py           # Associate images with metadata
+└── README.md
 ```
 
-## Architecture
+## Full Pipeline (Advanced)
 
-### Image-to-Text Pipeline
-
-Processes house images using Qwen-VL to generate room-specific descriptions.
-
-**Input**: House images (bathroom, bedroom, kitchen, frontal)
-**Output**: JSON file with text descriptions
-
-### Text-to-Embedding Pipeline
-
-Converts descriptions to semantic embeddings using sentence-transformers.
-
-**Input**: Descriptions from image-to-text pipeline
-**Output**: Embeddings uploaded to Pinecone index
-
-### Search Application
-
-Retrieves semantically similar houses from the Pinecone index.
-
-**Input**: Natural language query
-**Output**: Ranked list of matching properties
-
-## Development
-
-### Install Development Tools
+For processing raw data from scratch:
 
 ```bash
-pip install -e ".[dev]"
-pre-commit install
+# 1. Associate images with house metadata
+python house_image_pipeline.py \
+    --dataset-path "path/to/Houses Dataset" \
+    --output associations.json
+
+# 2. Generate descriptions from images
+python image_to_text_pipeline/main.py \
+    --input associations.json \
+    --output descriptions.parquet \
+    --num-workers 2
+
+# 3. Create embeddings and upload to Pinecone
+python text_to_embedding_pipeline/main.py \
+    --input_csv descriptions.csv \
+    --output_dir embeddings/ \
+    --pinecone_index house-embeddings
+
+# 4. Search!
+python app/main.py --pinecone_index house-embeddings
 ```
 
-### Run Tests
+## Requirements
 
-```bash
-pytest
-```
-
-### Code Quality
-
-Automatic checks on commit:
-
-```bash
-pre-commit run --all-files
-```
+- Python 3.12+
+- Pinecone account (free tier available)
+- GPU recommended (but not required)
+- 16GB RAM for full pipeline
 
 ## Dependencies
 
-### Core
+**Core:**
+- `sentence-transformers` — Semantic embeddings
+- `pinecone` — Vector database
+- `streamlit` — Web interface
+- `python-dotenv` — Configuration
 
-- `sentence-transformers`: Embedding generation
-- `pinecone`: Vector database
-- `python-dotenv`: Environment configuration
-- `Pillow`: Image processing
-
-### Pipeline
-
-- `torch`, `torchvision`: Deep learning framework
-- `transformers`: Vision-language models
-- `qwen-vl-utils`: Model utilities
-- `pandas`, `pyarrow`: Data processing
-
-### Development
-
-- `pytest`: Testing
-- `ruff`: Linting
-- `black`: Code formatting
-- `pre-commit`: Git hooks
+**Pipeline (optional):**
+- `torch` — Deep learning
+- `transformers` — Vision-language models
+- `qwen-vl-utils` — Model utilities
+- `pandas` — Data processing
 
 ## Dataset
 
-Designed for the [Houses Dataset](https://github.com/emanhamed/Houses-dataset):
+Uses the [Houses Dataset](https://github.com/emanhamed/Houses-dataset) by Eman Hamed:
 - 535 houses
 - 2,140 images (4 per house)
 - Metadata: bedrooms, bathrooms, area, zipcode, price
 
+## Example Search Results
+
+**Query:** "Modern 3-bedroom house with spacious kitchen"
+
+```
+#1: House ID 42 | Similarity: 0.8234
+    3 bed, 2 bath, 2500 sqft, $450,000
+    Modern kitchen with stainless steel appliances...
+
+#2: House ID 127 | Similarity: 0.8012
+    3 bed, 2.5 bath, 2800 sqft, $520,000
+    Contemporary design with updated kitchen...
+```
+
+## Architecture Highlights
+
+- **Multi-GPU Support**: Parallel image processing with worker threads
+- **Batch Processing**: Efficient batching for embeddings with size limits
+- **Resilient Pipeline**: Handles missing images and malformed data gracefully
+- **Cached Loading**: Session-based caching in Streamlit for fast reloads
+- **Metadata Filtering**: Optional filtering by price, bedrooms, bathrooms, etc.
+
+## Development
+
+```bash
+# Install dev tools
+pip install -e ".[dev]"
+
+# Format code
+black .
+
+# Lint
+ruff check .
+
+# Type check
+mypy .
+
+# Run tests
+pytest
+```
+
+Code quality checks run automatically on commit via pre-commit hooks.
+
+## Troubleshooting
+
+**Pinecone connection error?**  
+Check that `.env` file has valid `PINECONE_API_KEY` and the index exists.
+
+**CUDA/GPU not detected?**  
+Install CPU version: `pip install torch --index-url https://download.pytorch.org/whl/cpu`
+
+**Out of memory during image processing?**  
+Reduce workers: `--num-workers 1` and batch size: `--batch-size 50`
+
+**Model download timeout?**  
+Pre-download: `huggingface-cli download Qwen/Qwen2-VL-7B-Instruct`
+
+## Configuration
+
+Edit `.env` to customize:
+
+```env
+PINECONE_API_KEY=your_key_here
+PINECONE_INDEX=house-embeddings
+MODEL_NAME=sentence-transformers/all-MiniLM-L6-v2
+DEFAULT_TOP_K=10
+```
+
 ## License
 
-This project is licensed under the MIT License. See LICENSE file for details.
+MIT License — see [LICENSE](LICENSE) file.
 
-The Houses Dataset used in this project is subject to its own licensing terms. Refer to the [Houses Dataset repository](https://github.com/emanhamed/Houses-dataset) for licensing information.
+The Houses Dataset is subject to its own terms. See [Houses Dataset repository](https://github.com/emanhamed/Houses-dataset).
+
+## Acknowledgments
+
+- Qwen Team for the VLM model
+- Hugging Face for transformers
+- Pinecone for vector DB
+- Eman Hamed for the Houses Dataset
+
+## Questions?
+
+Open an issue on GitHub or check the [documentation](docs/) for more details.
+
+---
+
+**Ready to search?** [Try it now →](https://29-house-search.streamlit.app/)
