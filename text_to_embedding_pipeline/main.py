@@ -27,6 +27,29 @@ def load_data(csv_path: str) -> pd.DataFrame:
     print(f"Columns: {list(df.columns)}")
     return df
 
+def clean_data(df: pd.DataFrame) -> pd.DataFrame:
+    """Clean numerical data and remove invalid values"""
+    print("\n--- Cleaning Data ---")
+    
+    # Check for missing values in critical numerical fields
+    critical_numeric_cols = ['price', 'area', 'bedrooms', 'bathrooms']
+    missing_counts = df[critical_numeric_cols].isnull().sum()
+    if missing_counts.any():
+        print("Missing values found:")
+        print(missing_counts[missing_counts > 0])
+    
+    # Remove invalid values
+    before_invalid = len(df)
+    df = df[
+        (df['price'] > 0) & 
+        (df['area'] > 0) & 
+        (df['bedrooms'] >= 0) &  # 0 bedrooms could be studio
+        (df['bathrooms'] > 0)
+    ]
+    removed_invalid = before_invalid - len(df)
+    print(f"Removed {removed_invalid} rows with invalid values (price≤0, area≤0, bathrooms≤0)")
+    
+    return df
 
 def add_text_for_embeddings(df: pd.DataFrame) -> pd.DataFrame:
     """Create a text_for_embeddings column by combining relevant fields"""
@@ -326,6 +349,7 @@ def run_pipeline(
     # Step 2: Load data
     print("\n[2/6] Loading data...")
     df = load_data(input_csv)
+    df = clean_data(df)
 
     # Step 3: Create text for embeddings
     print("\n[3/6] Creating text for embeddings...")
