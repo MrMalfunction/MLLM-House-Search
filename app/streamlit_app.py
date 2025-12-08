@@ -184,12 +184,12 @@ def display_house_card(house_info, rank, score, pinecone_metadata=None):
                 st.markdown(description)
 
         # Display images in a grid
-        st.markdown("#### 📸 Property Images")
+        st.markdown("#### Property Images")
         st.markdown("")  # Add spacing
         img_cols = st.columns(4)
 
         image_types = ["frontal", "bedroom", "bathroom", "kitchen"]
-        image_labels = ["🏡 Frontal View", "🛏️ Bedroom", "🛁 Bathroom", "🍳 Kitchen"]
+        image_labels = [" Frontal View", " Bedroom", " Bathroom", " Kitchen"]
 
         for idx, (img_type, label) in enumerate(zip(image_types, image_labels, strict=False)):
             img_path = images.get(img_type, "")
@@ -321,7 +321,7 @@ def main():
         return
 
     # Search interface
-    st.markdown("###Search for Houses")
+    st.markdown("###  Search for Houses")
     st.markdown("")  # Add spacing
 
     # Search input
@@ -421,7 +421,7 @@ def main():
     else:
         # Show welcome message when no search has been performed
         st.markdown("---")
-        st.markdown("### 👋 Welcome!")
+        st.markdown("### Welcome!")
         st.markdown(
             """
         Start searching for your dream home by entering a **natural language description** above.
