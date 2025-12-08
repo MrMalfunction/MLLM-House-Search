@@ -372,7 +372,7 @@ def run_pipeline(
     print(f"\n[6/6] Saving outputs to: {output_dir}...")
     save_outputs(df, embeddings, output_dir)
 
-    # Optional: Upload to Pinecone
+    # Upload to Pinecone
     if pinecone_index:
         print(f"\n[OPTIONAL] Uploading to Pinecone index: {pinecone_index}...")
         index = pinecone_index_get(
