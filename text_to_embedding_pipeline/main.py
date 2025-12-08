@@ -18,19 +18,16 @@ MAX_REQUEST_BYTES = 1_900_000  # Pinecone has a 2MB request size limit
 
 # ---------- Data Loading & Processing ----------
 
-
+# Function to load data
 def load_data(csv_path: str) -> pd.DataFrame:
-    """Load the CSV data and print basic info"""
     df = pd.read_csv(csv_path)
     print(f"Loaded data from {csv_path}")
     print(f"Shape: {df.shape}")
     print(f"Columns: {list(df.columns)}")
     return df
 
+# Function to clean data
 def clean_data(df: pd.DataFrame) -> pd.DataFrame:
-    """Clean numerical data and remove invalid values"""
-    print("\n--- Cleaning Data ---")
-    
     # Check for missing values in critical numerical fields
     critical_numeric_cols = ['price', 'area', 'bedrooms', 'bathrooms']
     missing_counts = df[critical_numeric_cols].isnull().sum()
@@ -51,8 +48,8 @@ def clean_data(df: pd.DataFrame) -> pd.DataFrame:
     
     return df
 
+#Create a text_for_embeddings column by combining relevant fields
 def add_text_for_embeddings(df: pd.DataFrame) -> pd.DataFrame:
-    """Create a text_for_embeddings column by combining relevant fields"""
     missing_cols = [
         col
         for col in [
@@ -101,9 +98,8 @@ def add_text_for_embeddings(df: pd.DataFrame) -> pd.DataFrame:
     )
     return df
 
-
+# Preprocess the text_for_embeddings column
 def add_processed_text(df: pd.DataFrame) -> pd.DataFrame:
-    """Preprocess the text_for_embeddings column"""
     if "text_for_embeddings" not in df.columns:
         raise ValueError("text_for_embeddings column not found; run add_text_for_embeddings first.")
 
@@ -113,9 +109,9 @@ def add_processed_text(df: pd.DataFrame) -> pd.DataFrame:
 
 # ---------- Embedding Generation ----------
 
-
+# Load embedding model
 def load_embedding_model(model_name: str) -> SentenceTransformer:
-    """Load the SentenceTransformer model from HuggingFace"""
+   
     model = SentenceTransformer(model_name)
     return model
 
@@ -176,6 +172,7 @@ def embed_single_text_with_sliding_window(
         return np.zeros(embedding_dim, dtype=np.float32)
 
 
+# Compute embeddings for a series of texts
 def compute_embeddings(
     texts: pd.Series,
     model: SentenceTransformer,
@@ -183,7 +180,6 @@ def compute_embeddings(
     stride: int = 128,
     pool: str = "mean",
 ) -> np.ndarray:
-    """Compute embeddings for a series of texts"""
     # Replace NaNs with empty strings
     texts_list = texts.fillna("").tolist()
     tokenizer = model.tokenizer
@@ -202,7 +198,7 @@ def compute_embeddings(
         embeddings.append(embedding)
     return np.array(embeddings, dtype=np.float32)
 
-
+# Save processed DataFrame and embeddings to disk
 def save_outputs(
     df: pd.DataFrame,
     embeddings: np.ndarray,
@@ -210,7 +206,6 @@ def save_outputs(
     csv_name: str = "houses_processed.csv",
     embeddings_name: str = "house_embeddings.npy",
 ):
-    """Save processed DataFrame and embeddings to disk"""
     output_path = Path(output_dir)
     output_path.mkdir(parents=True, exist_ok=True)
 
@@ -226,9 +221,8 @@ def save_outputs(
 
 # ---------- Pinecone Integration ----------
 
-
+# Initialize or get existing Pinecone index
 def pinecone_index_get(index_name: str, dimension: int, metric: str):
-    """Initialize or get existing Pinecone index"""
     api_key_pinecone = PINECONE_API_KEY
 
     if not api_key_pinecone:
@@ -252,7 +246,7 @@ def pinecone_index_get(index_name: str, dimension: int, metric: str):
     index = pinecone.Index(index_name)
     return index
 
-
+# Update Pinecone index with embeddings from DataFrame
 def update_to_pinecone(
     index,
     df: pd.DataFrame,
@@ -260,7 +254,7 @@ def update_to_pinecone(
     column_id: str = "house_id",
     batch_size: int = 100,
 ):
-    """Upload embeddings with metadata to Pinecone index"""
+    
     if len(df) != embeddings.shape[0]:
         raise ValueError("Number of rows in df and embeddings do not match")
 
@@ -336,32 +330,27 @@ def run_pipeline(
     pinecone_index: str | None = None,
     pinecone_metric: str = "cosine",
 ):
-    """Main pipeline: CSV -> Text Processing -> Embeddings -> Storage"""
-
-    print("=" * 60)
-    print("TEXT-TO-EMBEDDING-TO-PINECONE PIPELINE")
-    print("=" * 60)
-
+    
     # Step 1: Initialize NLTK resources
-    print("\n[1/6] Initializing NLTK resources...")
+    print("Initializing NLTK resources...")
     ensure_nltk_resources()
 
     # Step 2: Load data
-    print("\n[2/6] Loading data...")
+    print("Loading data...")
     df = load_data(input_csv)
     df = clean_data(df)
 
     # Step 3: Create text for embeddings
-    print("\n[3/6] Creating text for embeddings...")
+    print("Creating text for embeddings...")
     df = add_text_for_embeddings(df)
     df = add_processed_text(df)
 
     # Step 4: Load embedding model
-    print(f"\n[4/6] Loading embedding model: {model_name}...")
+    print(f"Loading embedding model: {model_name}...")
     model = load_embedding_model(model_name)
 
     # Step 5: Compute embeddings
-    print(f"\n[5/6] Computing embeddings for column: {text_column}...")
+    print(f"Computing embeddings for column: {text_column}...")
     texts_to_embed: pd.Series = df[text_column]  # type: ignore
     embeddings = compute_embeddings(
         texts_to_embed, model=model, max_tokens=256, stride=128, pool="mean"
@@ -369,23 +358,18 @@ def run_pipeline(
     print(f"Generated embeddings with shape: {embeddings.shape}")
 
     # Step 6: Save outputs
-    print(f"\n[6/6] Saving outputs to: {output_dir}...")
+    print(f"Saving outputs to: {output_dir}...")
     save_outputs(df, embeddings, output_dir)
 
     # Upload to Pinecone
     if pinecone_index:
-        print(f"\n[OPTIONAL] Uploading to Pinecone index: {pinecone_index}...")
+        print(f"Uploading to Pinecone index: {pinecone_index}...")
         index = pinecone_index_get(
             index_name=pinecone_index,
             dimension=embeddings.shape[1],
             metric=pinecone_metric,
         )
         update_to_pinecone(index, df, embeddings, batch_size=100)
-
-    print("\n" + "=" * 60)
-    print("PIPELINE COMPLETED SUCCESSFULLY!")
-    print("=" * 60)
-
 
 # ---------- CLI ----------
 

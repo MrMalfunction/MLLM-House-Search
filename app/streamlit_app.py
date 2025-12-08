@@ -14,7 +14,6 @@ from text_to_embedding_pipeline.main import compute_embeddings
 # Page configuration
 st.set_page_config(
     page_title="House Search - Semantic Image Search",
-    page_icon="🏠",
     layout="wide",
     initial_sidebar_state="expanded",
 )
@@ -161,7 +160,7 @@ def display_house_card(house_info, rank, score, pinecone_metadata=None):
         # Header with better formatting
         col_header1, col_header2 = st.columns([3, 1])
         with col_header1:
-            st.markdown(f"### 🏠 Rank #{rank} - House ID: {metadata['house_id']}")
+            st.markdown(f"### Rank #{rank} - House ID: {metadata['house_id']}")
         with col_header2:
             st.markdown(f"**Similarity:** {score:.4f}")
 
@@ -181,7 +180,7 @@ def display_house_card(house_info, rank, score, pinecone_metadata=None):
         # Display description if available
         description = metadata.get("description", "")
         if description:
-            with st.expander("📝 View Full Description", expanded=False):
+            with st.expander("View Full Description", expanded=False):
                 st.markdown(description)
 
         # Display images in a grid
@@ -220,7 +219,7 @@ def display_house_card(house_info, rank, score, pinecone_metadata=None):
 def main():
     # Header
     st.markdown(
-        '<h1 class="main-header">🏠 House Search - Semantic Image Search</h1>',
+        '<h1 class="main-header">House Search - Semantic Image Search</h1>',
         unsafe_allow_html=True,
     )
     st.markdown(
@@ -230,7 +229,7 @@ def main():
 
     # Sidebar configuration
     with st.sidebar:
-        st.header("⚙️ Configuration")
+        st.header("Configuration")
 
         # Number of results
         top_k = st.slider(
@@ -242,7 +241,7 @@ def main():
         )
 
         st.markdown("---")
-        st.header("🔍 Filters")
+        st.header("Filters")
 
         # Price range filter
         price_filter = st.checkbox("Filter by Price Range")
@@ -293,18 +292,13 @@ def main():
             zipcode = st.text_input("Zipcode", placeholder="e.g., 85255")
 
         st.markdown("---")
-        st.markdown("### 💡 Search Tips")
+        st.markdown("###Search Tips")
         st.markdown(
             """
         - Be specific about features you want
         - Describe architectural styles
         - Mention desired amenities
         - Use natural language
-
-        **Example queries:**
-        - "Cozy ranch style home with fireplace"
-        - "Spacious family home in quiet neighborhood"
-        - "Contemporary design with open floor plan"
         """
         )
 
@@ -327,7 +321,7 @@ def main():
         return
 
     # Search interface
-    st.markdown("### 🔍 Search for Houses")
+    st.markdown("###Search for Houses")
     st.markdown("")  # Add spacing
 
     # Search input
@@ -339,7 +333,7 @@ def main():
             label_visibility="collapsed",
         )
     with col2:
-        search_button = st.button("🔎 Search", type="primary", use_container_width=True)
+        search_button = st.button(" Search", type="primary", use_container_width=True)
 
     # Build filters
     filters = {}
@@ -394,7 +388,7 @@ def main():
         and len(st.session_state.search_results.get("matches", [])) > 0
     ):
         st.markdown("---")
-        st.markdown("## 🏡 Search Results")
+        st.markdown("##  Search Results")
         st.markdown("")  # Add spacing
 
         matches = st.session_state.search_results["matches"]
@@ -423,7 +417,7 @@ def main():
         and len(st.session_state.search_results.get("matches", [])) == 0
     ):
         st.markdown("---")
-        st.info("🔍 No results found. Try a different query or adjust your filters.")
+        st.info(" No results found. Try a different query or adjust your filters.")
     else:
         # Show welcome message when no search has been performed
         st.markdown("---")
@@ -437,7 +431,7 @@ def main():
         )
 
         # Show some example houses
-        st.markdown("### 🌟 Featured Properties")
+        st.markdown("### Featured Properties")
         st.markdown("Here are some sample properties from our database:")
         st.markdown("")  # Add spacing
         sample_houses = list(st.session_state.house_data.values())[:3]
